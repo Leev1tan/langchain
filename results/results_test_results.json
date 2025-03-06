@@ -1,0 +1,40 @@
+{
+  "execution_accuracy": 0.0,
+  "detailed_results": [
+    {
+      "question_id": 0,
+      "question": "What is the highest eligible free rate for K-12 students in the schools in Alameda County?",
+      "gold_sql": "SELECT `Free Meal Count (K-12)` / `Enrollment (K-12)` FROM frpm WHERE `County Name` = 'Alameda' ORDER BY (CAST(`Free Meal Count (K-12)` AS REAL) / `Enrollment (K-12)`) DESC LIMIT 1",
+      "generated_sql": "SELECT MAX(eligible_free_rate) FROM schools WHERE county = 'Alameda County' AND type = 'K-12' \n\nSELECT MAX(eligible_free_rate) FROM schools WHERE county = 'Alameda County' AND type = 'K-12'",
+      "results_match": false
+    },
+    {
+      "question_id": 1,
+      "question": "Please list the lowest three eligible free rates for students aged 5-17 in continuation schools.",
+      "gold_sql": "SELECT `Free Meal Count (Ages 5-17)` / `Enrollment (Ages 5-17)` FROM frpm WHERE `Educational Option Type` = 'Continuation School' AND `Free Meal Count (Ages 5-17)` / `Enrollment (Ages 5-17)` IS NOT NULL ORDER BY `Free Meal Count (Ages 5-17)` / `Enrollment (Ages 5-17)` ASC LIMIT 3",
+      "generated_sql": "SELECT faculty_id FROM students WHERE admission_year BETWEEN 2008 AND 2020 ORDER BY faculty_id ASC LIMIT 3;",
+      "results_match": false
+    },
+    {
+      "question_id": 2,
+      "question": "Please list the zip code of all the charter schools in Fresno County Office of Education.",
+      "gold_sql": "SELECT T2.Zip FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode WHERE T1.`District Name` = 'Fresno County Office of Education' AND T1.`Charter School (Y/N)` = 1",
+      "generated_sql": "SELECT zip_code FROM schools WHERE county = 'Fresno County' AND type = 'Charter' \n\n\n            /* \n            You are an expert SQL reviewer. Verify that the following SQL query correctly answers the user's question.\n            \n            Database Schema Information:\n            Table faculties\nColumns: faculty_id (1, 2, 3), faculty_name (\u0424\u0430\u043a\u0443\u043b\u044c\u0442\u0435\u0442 \u0456\u043d\u0444\u043e\u0440\u043c\u0430\u0446\u0456\u0439\u043d\u0438\u0445 \u0442\u0435\u0445\u043d\u043e\u043b\u043e\u0433\u0456\u0439, \u0415\u043a\u043e\u043d\u043e\u043c\u0456\u0447\u043d\u0438\u0439 \u0444\u0430\u043a\u0443\u043b\u044c\u0442\u0435\u0442, \u0424\u0456\u043b\u043e\u043b\u043e\u0433\u0456\u0447\u043d\u0438\u0439 \u0444\u0430\u043a\u0443\u043b\u044c\u0442\u0435\u0442)\n\nTable departments\nColumns: department_id (1, 2, 3), department_name (\u041a\u0430\u0444\u0435\u0434\u0440\u0430 \u043f\u0440\u043e\u0433\u0440\u0430\u043c\u043d\u043e\u0457 \u0456\u043d\u0436\u0435\u043d\u0435\u0440\u0456\u0457, \u041a\u0430\u0444\u0435\u0434\u0440\u0430 \u0435\u043a\u043e\u043d\u043e\u043c\u0456\u0447\u043d\u043e\u0457 \u0442\u0435\u043e\u0440\u0456\u0457, \u041a\u0430\u0444\u0435\u0434\u0440\u0430 \u0443\u043a\u0440\u0430\u0457\u043d\u0441\u044c\u043a\u043e\u0457 \u043c\u043e\u0432\u0438), faculty_id (1, 2, 3)\n\nTable teachers\nColumns: teacher_id (1, 2, 3), first_name (\u0406\u0432\u0430\u043d, \u041e\u043b\u0435\u043d\u0430, \u041c\u0438\u043a\u043e\u043b\u0430), last_name (\u041f\u0435\u0442\u0440\u0435\u043d\u043a\u043e, \u041a\u043e\u0432\u0430\u043b\u0435\u043d\u043a\u043e, \u0421\u0438\u0434\u043e\u0440\u0435\u043d\u043a\u043e), department_id",
+      "results_match": false
+    },
+    {
+      "question_id": 3,
+      "question": "What is the unabbreviated mailing street address of the school with the highest FRPM count for K-12 students?",
+      "gold_sql": "SELECT T2.MailStreet FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode ORDER BY T1.`FRPM Count (K-12)` DESC LIMIT 1",
+      "generated_sql": "SELECT mailing_street_address FROM schools WHERE type = 'K-12' ORDER BY FRPM_count DESC LIMIT 1\n\n\nSELECT mailing_street_address \nFROM schools \nWHERE type = 'K-12' \nORDER BY FRPM_count DESC \nLIMIT 1\n\n\nSELECT mailing_street_address \nFROM schools \nWHERE type = 'K-12' \nORDER BY FRPM_count DESC \nLIMIT 1\n\n\nSELECT mailing_street_address \nFROM schools \nWHERE type = 'K-12' \nORDER BY FRPM_count DESC \nLIMIT 1\n\n\nSELECT mailing_street_address \nFROM schools \nWHERE type = 'K-12' \nORDER BY FRPM_count DESC \nLIMIT 1\n\n\nSELECT mailing_street_address \nFROM schools \nWHERE type = 'K-12' \nORDER BY FRPM_count DESC \nLIMIT 1\n\n\nSELECT mailing",
+      "results_match": false
+    },
+    {
+      "question_id": 4,
+      "question": "Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1.",
+      "gold_sql": "SELECT T2.Phone FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode WHERE T1.`Charter Funding Type` = 'Directly funded' AND T1.`Charter School (Y/N)` = 1 AND T2.OpenDate > '2000-01-01'",
+      "generated_sql": "SELECT s.phone_number FROM schools s JOIN charters c ON s.school_id = c.school_id WHERE s.type = 'Direct Charter-Funded' AND c.funding_type = 'Direct' AND s.opening_date > '2000-01-01' \n\n\n\nSELECT s.phone_number FROM schools s JOIN charters c ON s.school_id = c.school_id WHERE s.type = 'Direct Charter-Funded' AND c.funding_type = 'Direct' AND s.opening_date > '2000-01-01' \n\n\nHowever, the provided database schema does not contain the necessary tables (schools, charters) to answer the user's question. The query is correct based on the user's question, but it cannot be executed with the given database schema. \n\nTo answer the original question, the correct query would be:\n\n\nThere is no correct query based on the provided database schema, as it does not contain the necessary tables (schools, charters) to answer the user's question",
+      "results_match": false
+    }
+  ]
+}

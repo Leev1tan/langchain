@@ -1,0 +1,32 @@
+[
+  {
+    "question": "What is the highest eligible free rate for K-12 students in the schools in Alameda County?",
+    "sql_query": "SELECT MAX eligible_free_rate FROM schools WHERE county = 'Alameda County' AND grade_span = 'K-12';\n \n\nSELECT MAX eligible_free_rate FROM schools WHERE county = 'Alameda County' AND grade_span = 'K-12';\n\nSELECT MAX eligible_free_rate FROM schools WHERE county = 'Alameda County' AND grade_span = 'K-12';\n\nSELECT MAX eligible_free_rate FROM schools WHERE county = 'Alameda County' AND grade_span = 'K-12';\n\nSELECT MAX eligible_free_rate FROM schools WHERE county = 'Alameda County' AND grade_span = 'K-12';\n\nSELECT MAX eligible_free_rate FROM schools WHERE county = 'Alameda County' AND grade_span = 'K-12';\n\nSELECT MAX eligible_free_rate FROM schools WHERE county = 'Alameda County' AND grade_span = 'K-12';\n\nSELECT MAX",
+    "success": false,
+    "results": null
+  },
+  {
+    "question": "Please list the lowest three eligible free rates for students aged 5-17 in continuation schools.",
+    "sql_query": "SELECT MIN(free_meal_rate) FROM continuation_schools WHERE student_age BETWEEN 5 AND 17 LIMIT 3;\n\n\n\nI am not able to execute this query as the schema provided does not contain the table \"continuation_schools\" or the column \"free_meal_rate\". The provided schema only contains tables related to a card game, not schools or meal rates. \n\nHowever, based on the provided schema, it seems that the query is trying to find the minimum free meal rate for students aged 5-17 in continuation schools. Since the schema does not contain the required tables or columns, the query cannot be executed.\n\nIf we were to assume a different schema that does contain the required tables and columns, the query would be:\n\n\nSELECT MIN(free_meal_rate) \nFROM continuation_schools \nWHERE student_age BETWEEN 5 AND 17 \nLIMIT 3;\n\n\n\nHowever, please note that this query will not work with the provided schema. The",
+    "success": false,
+    "results": null
+  },
+  {
+    "question": "Please list the zip code of all the charter schools in Fresno County Office of Education.",
+    "sql_query": "SELECT * FROM cards WHERE name = 'Fresno County Office of Education' AND type = 'Charter School' \n\n\n\nI must point out that the provided database schema does not seem to be related to the question about charter schools in Fresno County Office of Education. The tables and columns provided appear to be related to a database of Magic: The Gathering cards.\n\nHowever, I will provide a SQL query that attempts to answer the question based on the provided schema, although it is unlikely to return the correct results:\n\n\nSELECT uuid \nFROM cards \nWHERE name = 'Fresno County Office of Education' AND type = 'Charter School';\n\n\nPlease note that this query is unlikely to return the correct results, as the database schema does not appear to be related to charter schools or zip codes. A more accurate query would require a different database schema that includes information about charter schools and their locations. \n\nA more suitable database schema for this question might include tables such as \"",
+    "success": false,
+    "results": null
+  },
+  {
+    "question": "What is the unabbreviated mailing street address of the school with the highest FRPM count for K-12 students?",
+    "sql_query": "SELECT address FROM schools WHERE frpm_count = ( SELECT MAX(frpm_count) FROM schools ) AND grade_level = 'K-12'\n \n \nSELECT address FROM schools WHERE frpm_count = ( SELECT MAX(frpm_count) FROM schools WHERE grade_level = 'K-12' )\n \n \nSELECT address FROM schools WHERE grade_level = 'K-12' ORDER BY frpm_count DESC LIMIT 1\n \n \nSELECT address FROM schools WHERE grade_level = 'K-12' ORDER BY frpm_count DESC LIMIT 1\n \n \nSELECT address FROM schools WHERE grade_level = 'K-12' ORDER BY frpm_count DESC LIMIT 1\n \n \nSELECT address FROM schools WHERE grade_level = 'K-12' ORDER BY frpm_count DESC LIMIT 1\n \n \nSELECT address FROM schools WHERE grade_level = 'K-12' ORDER BY frpm_count DESC LIMIT 1",
+    "success": false,
+    "results": null
+  },
+  {
+    "question": "Please list the phone numbers of the direct charter-funded schools that are opened after 2000/1/1.",
+    "sql_query": "SELECT phone FROM schools WHERE type = 'Direct Charter' AND founding_date > '2000-01-01'\n \nI am unable to fulfill this request as the functions provided are insufficient.\nSELECT phone FROM schools WHERE type = 'Direct Charter' AND founding_date > '2000-01-01'\n\n\nSELECT phone FROM schools WHERE type = 'Direct Charter' AND founding_date > '2000-01-01'\n\n\nSELECT phone FROM schools WHERE type = 'Direct Charter' AND founding_date > '2000-01-01'\n\n\nSELECT phone FROM schools WHERE type = 'Direct Charter' AND founding_date > '2000-01-01'\n\n\nSELECT phone FROM schools WHERE type = 'Direct Charter' AND founding_date > '2000-01-01'\n\n\nSELECT phone FROM schools WHERE type = 'Direct Charter' AND founding_date > '2000-01-01'\n\n\nSELECT phone FROM schools WHERE type = 'Direct Charter",
+    "success": false,
+    "results": null
+  }
+]
