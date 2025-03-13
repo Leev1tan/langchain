@@ -454,13 +454,19 @@ QUERY PLAN:
 RELEVANT DATABASE SCHEMA:
 {schema}
 
-Generate a valid, executable SQL query that correctly answers the user's question. Follow these guidelines:
-1. Use only tables and columns that exist in the schema
-2. Use proper joins based on the foreign key relationships
-3. Handle any necessary filtering, grouping, or aggregation
-4. Ensure the query is syntactically correct
+EXTREMELY IMPORTANT: CAREFULLY EXAMINE the schema above to identify the EXACT table and column names needed. Do NOT reference columns that don't exist in the schema. Double-check that every column and table name you use actually exists.
 
-YOUR SQL QUERY (PROVIDE ONLY THE EXECUTABLE SQL WITHOUT ANY EXPLANATION OR MARKDOWN):
+Generate a valid, executable SQL query that correctly answers the user's question. Follow these strict guidelines:
+1. Use ONLY tables and columns that EXIST in the schema provided - verify each one
+2. Use proper joins based on the foreign key relationships shown in the schema
+3. Handle any necessary filtering, grouping, or aggregation
+4. Double-check column names for spelling and case sensitivity
+5. For tables containing financial data, look for columns named 'amount', 'cost', 'budget', 'spent', or similar
+6. When the question asks for a percentage, use CAST and multiplication by 100 for accurate calculation
+
+IMPORTANT: PROVIDE ONLY THE EXECUTABLE SQL WITHOUT ANY MARKDOWN FORMATTING, EXPLANATION, OR TEXT. DO NOT INCLUDE ANY ``` BACKTICKS OR COMMENTS IN YOUR RESPONSE, JUST THE RAW SQL QUERY. Your entire response should be valid SQL that can be executed directly.
+
+YOUR SQL QUERY:
 """
         
         retries = 0
@@ -470,18 +476,20 @@ YOUR SQL QUERY (PROVIDE ONLY THE EXECUTABLE SQL WITHOUT ANY EXPLANATION OR MARKD
                 response = self.llm.invoke(sql_generation_prompt)
                 print(f"[RefinerAgent] SQL Generation Output: {len(response)} chars")
                 
-                # Extract just the SQL query, removing any markdown code blocks
-                sql_query = response.strip()
-                sql_query = re.sub(r'^```sql\s*', '', sql_query, flags=re.MULTILINE)
-                sql_query = re.sub(r'\s*```$', '', sql_query, flags=re.MULTILINE)
-                sql_query = sql_query.strip()
+                # Extract just the SQL query and clean it
+                sql_query = self._clean_sql_response(response)
                 
-                # Clean up common SQL issues
-                sql_query = self._clean_sql(sql_query)
+                # If SQL query is empty or obviously not SQL, use a fallback
+                if not sql_query or len(sql_query) < 10 or not self._looks_like_sql(sql_query):
+                    print(f"[RefinerAgent] Extracted SQL doesn't look valid: {sql_query}")
+                    sql_query = f"SELECT * FROM {self._extract_table_name(schema)} LIMIT 5;"
+                    notes = "Generated invalid SQL. Using fallback query."
+                else:
+                    notes = "SQL generated based on understanding and plan."
                 
                 return {
                     "sql": sql_query,
-                    "notes": "SQL generated based on understanding and plan."
+                    "notes": notes
                 }
             except Exception as e:
                 error_str = str(e).lower()
@@ -501,34 +509,27 @@ YOUR SQL QUERY (PROVIDE ONLY THE EXECUTABLE SQL WITHOUT ANY EXPLANATION OR MARKD
         
         # If we've exhausted retries or encountered a non-rate-limit error
         return {
-            "sql": f"SELECT * FROM {self._extract_table_name(schema)} LIMIT 5",
+            "sql": f"SELECT * FROM {self._extract_table_name(schema)} LIMIT 5;",
             "notes": f"Error occurred during SQL generation. Using fallback query."
         }
     
     def refine_sql(
         self, 
         query: str, 
-        schema: str,
-        understanding_and_plan: Dict[str, str],
         sql_query: str,
         error_message: str
     ) -> Dict[str, str]:
         """
-        Refine a SQL query based on error feedback
+        Simplified version of refine_sql that takes only the essential parameters
         
         Args:
             query: The user's natural language query
-            schema: Relevant schema information
-            understanding_and_plan: Dictionary containing understanding and plan
             sql_query: The original SQL query that failed
             error_message: The error message from the database
             
         Returns:
             Dictionary containing the refined SQL and notes
         """
-        understanding = understanding_and_plan.get("understanding", "")
-        plan = understanding_and_plan.get("plan", "")
-        
         print(f"\n[RefinerAgent] Refinement Inputs:")
         print(f"  - Query: {query}")
         print(f"  - Original SQL: {sql_query}")
@@ -542,18 +543,45 @@ YOUR SQL QUERY (PROVIDE ONLY THE EXECUTABLE SQL WITHOUT ANY EXPLANATION OR MARKD
                 "notes": "Added ROLLBACK to reset aborted transaction."
             }
         
+        # Handle reserved words in SQL
+        if "syntax error at or near" in error_message.lower():
+            # Check for common reserved words
+            reserved_words = ["order", "user", "group", "table", "select", "where", "from", "join"]
+            for word in reserved_words:
+                if f'"{word}"' not in sql_query and f' {word} ' in sql_query.lower():
+                    # Add quotes around the reserved word
+                    sql_query = sql_query.replace(f" {word} ", f' "{word}" ')
+                    return {
+                        "sql": sql_query,
+                        "notes": f"Added quotes around reserved word: {word}"
+                    }
+        
+        # Check for backticks causing syntax errors
+        if "syntax error at or near" in error_message.lower() and "````" in sql_query:
+            # Remove backticks and any text after them
+            clean_sql = sql_query.split("````")[0].strip()
+            if clean_sql.endswith(';'):
+                return {
+                    "sql": clean_sql,
+                    "notes": "Removed backticks and trailing text causing syntax error."
+                }
+        
+        # Handle column does not exist errors
+        if "column" in error_message.lower() and "does not exist" in error_message.lower():
+            # Simplify the query to avoid non-existent columns
+            if "SELECT" in sql_query.upper() and "FROM" in sql_query.upper():
+                # Extract the table name from the query
+                table_match = re.search(r'FROM\s+([a-zA-Z0-9_]+)', sql_query, re.IGNORECASE)
+                if table_match:
+                    table_name = table_match.group(1)
+                    return {
+                        "sql": f"SELECT * FROM {table_name} LIMIT 5;",
+                        "notes": f"Using a simplified query due to non-existent column error."
+                    }
+        
         refinement_prompt = f"""You are an expert SQL query debugger. The SQL query below failed with an error. Fix the query to make it work correctly.
 
 USER QUESTION: {query}
-
-UNDERSTANDING: 
-{understanding}
-
-QUERY PLAN:
-{plan}
-
-RELEVANT DATABASE SCHEMA:
-{schema}
 
 ORIGINAL SQL QUERY:
 {sql_query}
@@ -561,14 +589,16 @@ ORIGINAL SQL QUERY:
 ERROR MESSAGE:
 {error_message}
 
-Analyze the error and fix the SQL query. Common issues include:
-1. Incorrect table or column names
-2. Missing or incorrect joins
-3. Syntax errors
-4. Type mismatches
-5. Missing GROUP BY clauses for aggregations
+IMPORTANT DEBUGGING INSTRUCTIONS:
+1. If the error is "column X does not exist", make sure you're using ONLY column names that exist in the database schema.
+2. For financial queries, check for columns named 'amount', 'cost', 'spent', 'budget', etc.
+3. For percentage calculations, use CAST and multiplication by 100 for accurate results.
+4. When joining tables, make sure the join conditions use columns that exist in both tables.
+5. Double-check all table names and column references.
+6. Avoid using backticks (`) in PostgreSQL queries.
+7. Reserved words in SQL need to be quoted (e.g., "order", "user", "group", "table").
 
-FIXED SQL QUERY (PROVIDE ONLY THE EXECUTABLE SQL WITHOUT ANY EXPLANATION OR MARKDOWN):
+EXTREMELY IMPORTANT: Provide ONLY the fixed SQL query without any explanation, comments, markdown formatting (no ```), or any other text. Just the raw SQL query and nothing else.
 """
         
         retries = 0
@@ -578,14 +608,24 @@ FIXED SQL QUERY (PROVIDE ONLY THE EXECUTABLE SQL WITHOUT ANY EXPLANATION OR MARK
                 response = self.llm.invoke(refinement_prompt)
                 print(f"[RefinerAgent] Refinement Output: {len(response)} chars")
                 
-                # Extract just the SQL query, removing any markdown code blocks
-                refined_sql = response.strip()
-                refined_sql = re.sub(r'^```sql\s*', '', refined_sql, flags=re.MULTILINE)
-                refined_sql = re.sub(r'\s*```$', '', refined_sql, flags=re.MULTILINE)
-                refined_sql = refined_sql.strip()
+                # Extract just the SQL query using our improved method
+                refined_sql = self._clean_sql_response(response)
                 
-                # Clean up common SQL issues
-                refined_sql = self._clean_sql(refined_sql)
+                # Ensure we have a valid SQL query
+                if not refined_sql or len(refined_sql) < 10 or not self._looks_like_sql(refined_sql):
+                    print("[RefinerAgent] Refined SQL doesn't look valid, using original SQL.")
+                    return {
+                        "sql": sql_query,
+                        "notes": "Refinement didn't produce valid SQL. Using original query."
+                    }
+                
+                # Check if refinement made a difference
+                if refined_sql == sql_query:
+                    print("[RefinerAgent] Refinement produced the same SQL.")
+                    return {
+                        "sql": sql_query,
+                        "notes": "Refinement produced the same SQL."
+                    }
                 
                 return {
                     "sql": refined_sql,
@@ -598,19 +638,20 @@ FIXED SQL QUERY (PROVIDE ONLY THE EXECUTABLE SQL WITHOUT ANY EXPLANATION OR MARK
                 # Check if it's a rate limit error
                 if any(phrase in error_str for phrase in ['rate limit', 'too many requests', 'server overloaded', '429', '503', 'timeout']):
                     wait_time = 2 ** retries  # Exponential backoff: 2, 4, 8 seconds
-                    print(f"[RefinerAgent] Rate limit error, retrying in {wait_time} seconds... ({retries}/{self.max_retries})")
+                    print(f"[RefinerAgent] Rate limit hit. Waiting {wait_time} seconds before retry {retries}/{self.max_retries}")
                     time.sleep(wait_time)
-                    continue
                 else:
-                    # Not a rate limit error, break the loop
-                    logger.error(f"Error in SQL refinement: {e}")
-                    print(f"[RefinerAgent] SQL Refinement Error: {e}, returning original query")
-                    break
+                    # For other errors, just return the original query
+                    print(f"[RefinerAgent] Error during refinement: {e}")
+                    return {
+                        "sql": sql_query,
+                        "notes": f"Error during refinement: {e}"
+                    }
         
         # If we've exhausted retries or encountered a non-rate-limit error
         return {
             "sql": sql_query,
-            "notes": f"Error occurred during SQL refinement. Keeping original query."
+            "notes": "Failed to refine SQL after multiple attempts."
         }
     
     def _extract_table_name(self, schema: str) -> str:
@@ -668,21 +709,97 @@ FIXED SQL QUERY (PROVIDE ONLY THE EXECUTABLE SQL WITHOUT ANY EXPLANATION OR MARK
         return sql
     
     def _clean_sql_response(self, sql: str) -> str:
-        """Clean up the SQL response to extract just the SQL query"""
-        # Remove markdown code blocks if present
-        sql_query = re.search(r'```(?:sql)?\s*(.*?)\s*```', sql, re.DOTALL)
-        if sql_query:
-            return sql_query.group(1).strip()
+        """
+        Clean up the SQL response to extract just the SQL query.
+        This enhanced version is designed to handle responses with explanations, 
+        markdown formatting, and non-SQL text.
+        """
+        if not sql:
+            return ""
+            
+        # Strip the response
+        sql = sql.strip()
         
-        # If no code blocks, try to extract SELECT statement
-        sql_query = re.search(r'(SELECT.*?);', sql, re.DOTALL | re.IGNORECASE)
-        if sql_query:
-            return sql_query.group(1).strip() + ";"
+        # First, check for markdown code blocks and extract content
+        markdown_match = re.search(r'```(?:sql)?\s*(.*?)\s*```', sql, re.DOTALL)
+        if markdown_match:
+            sql = markdown_match.group(1).strip()
         
-        # If still no clear SQL, try a more general regex for SQL statements
-        sql_query = re.search(r'(?:SELECT|WITH|CREATE|INSERT|UPDATE|DELETE).*?;', sql, re.DOTALL | re.IGNORECASE)
-        if sql_query:
-            return sql_query.group(0).strip()
+        # Check for backticks without markdown format and remove them and anything after
+        if '````' in sql:
+            sql = sql.split('````')[0].strip()
         
-        # If all else fails, return the original response
-        return sql.strip() 
+        # Handle trailing backticks explicitly (````)
+        sql = re.sub(r'\s*```+\s*;?', ';', sql)
+        # Handle trailing backticks with no semicolon
+        sql = re.sub(r'\s*```+\s*$', '', sql)
+        
+        # Try to extract a SQL query - looking for SELECT, WITH, etc.
+        sql_match = re.search(r'(?:SELECT|WITH|CREATE|INSERT|UPDATE|DELETE).*?;', sql, re.DOTALL | re.IGNORECASE)
+        if sql_match:
+            sql = sql_match.group(0).strip()
+        
+        # If we don't have a semicolon, try to get just the SQL part without the semicolon
+        if not ';' in sql:
+            sql_match = re.search(r'(?:SELECT|WITH|CREATE|INSERT|UPDATE|DELETE).*', sql, re.DOTALL | re.IGNORECASE)
+            if sql_match:
+                sql = sql_match.group(0).strip()
+                # Add semicolon if missing
+                if not sql.endswith(';'):
+                    sql = sql + ';'
+        
+        # Remove any non-SQL noise before the query
+        prefixes = ['sql', 'query', 'fixed query', 'corrected query', 'here', 'the', 'is', 'answer']
+        for prefix in prefixes:
+            if sql.lower().startswith(prefix):
+                # Find the actual SQL start
+                for keyword in ['SELECT', 'WITH', 'CREATE', 'INSERT', 'UPDATE', 'DELETE']:
+                    if keyword in sql.upper():
+                        start_idx = sql.upper().find(keyword)
+                        if start_idx > 0:
+                            sql = sql[start_idx:].strip()
+                            break
+        
+        # Clean up common SQL issues
+        sql = self._clean_sql(sql)
+        
+        # Special handling for specific trailing characters that cause syntax errors
+        sql = re.sub(r'```+\s*$', '', sql)  # Remove any trailing backticks
+        sql = re.sub(r'^\s*```+\s*', '', sql)  # Remove any leading backticks
+        
+        # Final check - if the result is very long (>500 chars) and contains words like "I", "explanation", 
+        # or other clearly non-SQL content, it's probably not just SQL
+        if len(sql) > 500 and any(word in sql.lower() for word in ['i ', 'explanation', 'understand', 'however', 'note:']):
+            # Try one more extraction of just the SQL part
+            for keyword in ['SELECT', 'WITH', 'CREATE', 'INSERT', 'UPDATE', 'DELETE']:
+                if keyword in sql.upper():
+                    pattern = f'{keyword}.*?;'
+                    sql_part = re.search(pattern, sql, re.DOTALL | re.IGNORECASE)
+                    if sql_part:
+                        return sql_part.group(0).strip()
+        
+        return sql
+    
+    def _looks_like_sql(self, text: str) -> bool:
+        """Check if a string looks like a valid SQL query"""
+        # Check for common SQL keywords
+        sql_keywords = ['SELECT', 'FROM', 'WHERE', 'JOIN', 'GROUP BY', 'ORDER BY', 'HAVING', 'LIMIT']
+        
+        # Must have SELECT (for the queries we're generating)
+        if 'SELECT' not in text.upper():
+            return False
+            
+        # Must have FROM (for the queries we're generating) 
+        if 'FROM' not in text.upper():
+            return False
+            
+        # Check if it contains explanatory language
+        non_sql_indicators = ['I would', 'please note', 'this query', 'explanation', 'hope this helps']
+        if any(indicator in text.lower() for indicator in non_sql_indicators):
+            return False
+        
+        # Count how many SQL keywords are present
+        keyword_count = sum(1 for keyword in sql_keywords if keyword in text.upper())
+        
+        # A real SQL query should have multiple keywords and appropriate length
+        return keyword_count >= 2 and len(text) > 20 and len(text) < 1000 
