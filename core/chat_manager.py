@@ -12,17 +12,22 @@ from langchain_together import Together
 import os
 import json
 import time
+import sqlite3
+import dotenv
+
+# Load environment variables from .env file if present
+dotenv.load_dotenv()
 
 from core.agents import SelectorAgent, DecomposerAgent, RefinerAgent
 from core.config import DB_CONFIG
 
-# PostgreSQL connection configuration (from int.py)
+# PostgreSQL connection configuration 
 DB_CONFIG = {
-    "dbname": "postgres",
-    "user": "postgres",
-    "password": "superuser",
-    "host": "localhost",
-    "port": "5432"
+    "dbname": os.environ.get("POSTGRES_DB", "postgres"),
+    "user": os.environ.get("POSTGRES_USER", "postgres"),
+    "password": os.environ.get("POSTGRES_PASSWORD", "postgres"),
+    "host": os.environ.get("POSTGRES_HOST", "localhost"),
+    "port": os.environ.get("POSTGRES_PORT", "5432")
 }
 
 logger = logging.getLogger(__name__)
@@ -39,165 +44,188 @@ class ChatManager:
     """
     
     def __init__(
-        self,
-        model_name: str = "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-        api_key: Optional[str] = None,
-        temperature: float = 0.0,
-        max_tokens: int = 1024,
-        **kwargs,
-    ):
-        """Initialize the chat manager."""
+            self,
+            model_name: str = "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+            api_key: Optional[str] = None,
+            db_name: Optional[str] = None,
+            temperature: float = 0.0,
+            max_tokens: int = 1024,
+            **kwargs
+        ):
+        """Initialize the ChatManager with model name and API key."""
         self.model_name = model_name
+        self.api_key = api_key
+        self.db_name = db_name
         self.temperature = temperature
         self.max_tokens = max_tokens
-        
-        # Set default API key if none provided
-        if api_key is None:
-            api_key = "6e4593b7c0e0279476b65f144273d1ee972a47e3eb543c9649b36aaf6c114a82"
-        
-        # Initialize the LLM
-        self.llm = Together(
-            model=model_name,
-            temperature=temperature,
-            together_api_key=api_key,
-            max_tokens=max_tokens,
-            **kwargs,
-        )
-        
-        # Setup agents with basic parameters
-        self.selector_agent = SelectorAgent(model_name, api_key)
-        self.decomposer_agent = DecomposerAgent(model_name, api_key)
-        self.refiner_agent = RefinerAgent(model_name, api_key)
-        
-        # Setup memory (using message list instead of ConversationBufferMemory)
-        self.messages = []
-        
-        # Setup database configuration
-        self.db_config = DB_CONFIG.copy()
-        self.db_name = None
+        self.kwargs = kwargs
         self.connection = None
         self.cur = None
-        self.connected = False
-        
-        # Initialize schema knowledge
-        schema_info = self._initialize_schema_knowledge()
-        if isinstance(schema_info, bool) and not schema_info:
-            # If initialization failed, set empty schema
-            self.schema_knowledge = ""
-            logger.warning("Failed to initialize schema knowledge, using empty schema")
-        else:
-            # Otherwise use the returned schema
-            self.schema_knowledge = schema_info
-        
+        self._schema_knowledge = None
+        self.schema_knowledge = ""
+        self.db_config = DB_CONFIG.copy()
         self.query_examples = []  # Will store successful query examples
         
         # Connect to database if db_name is provided
         if self.db_name:
-            self._connect_to_database()
+            self.connect_to_database(self.db_name)
     
-    def update_database(self, db_name):
-        """
-        Update the database connection to a new database
-        
-        Args:
-            db_name: Name of the database to connect to
-            
-        Returns:
-            Boolean indicating success
-        """
-        # Close existing connection if any
-        if self.connection:
-            try:
+    @property
+    def connected(self):
+        """Check if the database connection is active."""
+        return self.connection is not None
+
+    def connect_to_database(self, db_name):
+        """Connect to the specified database."""
+        try:
+            # Close existing connection if any
+            if self.connection:
                 self.connection.close()
-                print(f"Closed connection to database: {self.db_name}")
-            except Exception as e:
-                print(f"Error closing connection: {e}")
-        
-        # Update database name
-        self.db_name = db_name
-        self.db_config["dbname"] = db_name
-        
-        # Check if we already have cached schema for this database on disk
-        schema_cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'schema_cache')
-        schema_cache_file = os.path.join(schema_cache_dir, f"{db_name}_schema.json")
-        
-        # Try to load from disk cache first
-        schema_info = None
-        
-        if os.path.exists(schema_cache_file):
-            try:
-                with open(schema_cache_file, 'r') as f:
-                    schema_data = json.load(f)
-                    if 'schema' in schema_data and 'timestamp' in schema_data:
-                        # Check if cache is valid (less than 24 hours old)
-                        cache_age = time.time() - schema_data['timestamp']
-                        if cache_age < 86400:  # 24 hours
-                            schema_info = schema_data['schema']
-                            logger.info(f"Loaded schema for {db_name} from disk cache (age: {cache_age/3600:.1f} hours)")
-                            print(f"Using cached schema for database: {db_name}")
-            except Exception as e:
-                logger.warning(f"Failed to load schema cache from disk: {e}")
-        
-        # Connect to the database
-        if self._connect_to_database():
-            # If we don't have valid cache, initialize schema knowledge
-            if not schema_info:
-                logger.info(f"Initializing schema knowledge for {db_name}")
-                print(f"Extracting schema for database: {db_name}")
-                
-                # Try full schema extraction first
-                full_schema = self._initialize_schema_knowledge()
-                
-                if full_schema and not isinstance(full_schema, bool):
-                    schema_info = full_schema
-                    self._save_schema_to_cache(schema_info)
-                    logger.info(f"Successfully initialized full schema for {db_name}")
-                else:
-                    # If full extraction failed, try the simple approach
-                    logger.warning(f"Full schema extraction failed for {db_name}, trying simple extraction")
-                    try:
-                        simple_schema = self._get_simple_schema_info()
-                        if simple_schema and isinstance(simple_schema, str):
-                            schema_info = simple_schema
-                            self._save_schema_to_cache(schema_info)
-                            logger.info(f"Used simple schema extraction for {db_name}")
-                        else:
-                            schema_info = ""
-                            logger.warning(f"Even simple schema extraction failed for {db_name}")
-                    except Exception as e:
-                        schema_info = ""
-                        logger.error(f"Error in simple schema extraction: {e}")
+                self.connection = None
+                self.cur = None
             
-            # Set the schema knowledge
-            self.schema_knowledge = schema_info if schema_info else ""
+            # Check if this is a SQLite database (file with .db, .sqlite, .sqlite3 extension)
+            is_sqlite = db_name.endswith(('.db', '.sqlite', '.sqlite3')) or os.path.isfile(db_name)
+            
+            if is_sqlite:
+                # Connect to SQLite database
+                self.connection = sqlite3.connect(db_name)
+                self.db_name = db_name
+                self.cur = self.connection.cursor()
+                # Initialize schema for SQLite
+                self._initialize_sqlite_schema()
+            else:
+                # Connect to PostgreSQL database
+                # Update database name in config
+                self.db_config["dbname"] = db_name
+                
+                # Connect to PostgreSQL
+                self.connection = psycopg2.connect(**self.db_config)
+                self.db_name = db_name
+                self.cur = self.connection.cursor()
+                # Initialize schema for PostgreSQL
+                self._initialize_schema_knowledge()
+            
             print(f"Successfully connected to database: {db_name}")
             return True
-        else:
-            self.schema_knowledge = ""
-            print(f"Failed to connect to database: {db_name}")
-            return False
-    
-    def _connect_to_database(self):
-        """Connect to the PostgreSQL database."""
-        try:
-            self.connection = psycopg2.connect(
-                dbname=self.db_config.get("dbname", "postgres"),
-                user=self.db_config.get("user", "postgres"),
-                password=self.db_config.get("password", "postgres"),
-                host=self.db_config.get("host", "localhost"),
-                port=self.db_config.get("port", "5432")
-            )
-            self.cur = self.connection.cursor()
-            self.connected = True
-            logger.info("Successfully connected to PostgreSQL database.")
-            return True
+            
         except Exception as e:
-            logger.error(f"Error connecting to PostgreSQL database: {e}")
-            self.connected = False
+            logger.error(f"Error connecting to database: {e}")
+            print(f"Error connecting to database: {e}")
+            return False
+
+    def _initialize_sqlite_schema(self):
+        """Initialize schema knowledge for SQLite database."""
+        import time
+        
+        if not self.connection:
+            logger.error("Cannot initialize schema: Not connected to database")
+            return False
+        
+        try:
+            # Get list of tables
+            self.cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
+            tables = [table[0] for table in self.cur.fetchall()]
+            
+            if not tables:
+                # Try again with a different query
+                self.cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                tables = [table[0] for table in self.cur.fetchall() if not table[0].startswith('sqlite_')]
+            
+            if not tables:
+                logger.warning("No tables found in database")
+                # Create a dummy schema to allow querying to continue
+                self.schema_knowledge = "This database appears to be empty or its schema cannot be accessed."
+                return False
+            
+            # Build schema information
+            schema_info = []
+            
+            for table in tables:
+                try:
+                    # Get table info
+                    self.cur.execute(f"PRAGMA table_info({table});")
+                    columns = self.cur.fetchall()
+                    
+                    if not columns:
+                        logger.warning(f"No columns found for table {table}")
+                        continue
+                    
+                    table_info = f"Table: {table}\nColumns:\n"
+                    primary_keys = []
+                    
+                    for col in columns:
+                        # PRAGMA table_info returns: cid, name, type, notnull, dflt_value, pk
+                        col_id, col_name, col_type, not_null, default_val, is_pk = col
+                        
+                        # Build column description
+                        nullable = "" if not_null else " NULL"
+                        default = f" DEFAULT {default_val}" if default_val else ""
+                        pk_indicator = " (PRIMARY KEY)" if is_pk else ""
+                        
+                        if is_pk:
+                            primary_keys.append(col_name)
+                        
+                        table_info += f"  - {col_name}: {col_type}{pk_indicator}{nullable}{default}\n"
+                    
+                    # Get foreign keys
+                    self.cur.execute(f"PRAGMA foreign_key_list({table});")
+                    foreign_keys = self.cur.fetchall()
+                    
+                    if foreign_keys:
+                        table_info += "Foreign Keys:\n"
+                        for fk in foreign_keys:
+                            # PRAGMA foreign_key_list returns: id, seq, table, from, to, on_update, on_delete, match
+                            _, _, target_table, from_col, to_col, _, _, _ = fk
+                            table_info += f"  - {from_col} -> {target_table}.{to_col}\n"
+                    
+                    # Get sample data
+                    try:
+                        # Use LIMIT with a reasonable value
+                        self.cur.execute(f"SELECT * FROM [{table}] LIMIT 3;")
+                        sample_data = self.cur.fetchall()
+                        
+                        if sample_data:
+                            # Get column names
+                            col_names = [description[0] for description in self.cur.description]
+                            
+                            table_info += "Sample Data (up to 3 rows):\n"
+                            for row in sample_data:
+                                row_values = []
+                                for i, value in enumerate(row):
+                                    if value is None:
+                                        row_values.append(f"{col_names[i]}=NULL")
+                                    else:
+                                        row_values.append(f"{col_names[i]}={value}")
+                                
+                                table_info += f"  - {', '.join(row_values)}\n"
+                    except Exception as e:
+                        logger.warning(f"Error getting sample data for table {table}: {e}")
+                    
+                    schema_info.append(table_info)
+                except Exception as table_error:
+                    logger.warning(f"Error processing table {table}: {table_error}")
+            
+            # Join all schema information
+            if schema_info:
+                self.schema_knowledge = "\n".join(schema_info)
+                logger.info(f"Successfully initialized schema with {len(tables)} tables and {len(schema_info)} table descriptions")
+                print(f"Schema initialized with {len(tables)} tables")
+                return True
+            else:
+                # No schema info available
+                self.schema_knowledge = "Schema information could not be retrieved."
+                logger.warning("No schema information could be retrieved")
+                return False
+        
+        except Exception as e:
+            logger.error(f"Error initializing SQLite schema: {e}")
+            self.schema_knowledge = f"Error initializing schema: {str(e)}"
+            print(f"Error initializing schema: {str(e)}")
             return False
     
     def _initialize_schema_knowledge(self):
-        """Initialize schema knowledge by extracting database schema information."""
+        """Initialize schema knowledge by extracting database schema information from PostgreSQL."""
         if not self.connected:
             logger.error("Cannot initialize schema knowledge: Not connected to database")
             return False
@@ -312,7 +340,7 @@ class ChatManager:
                     try:
                         # Use a 2-second timeout for sample data queries
                         self.cur.execute(f"SET statement_timeout = 2000")
-                        self.cur.execute(f"SELECT * FROM {table} LIMIT 5")
+                        self.cur.execute(f'SELECT * FROM "{table}" LIMIT 5')
                         sample_data = self.cur.fetchall()
                         col_names = [desc[0] for desc in self.cur.description]
                         
@@ -380,77 +408,55 @@ class ChatManager:
                 formatted_schema.append(table_desc)
             
             final_schema = "\n".join(formatted_schema)
-            return final_schema
+            self.schema_knowledge = final_schema
+            print(f"Successfully initialized PostgreSQL schema with {len(tables)} tables")
+            return True
         
         except Exception as e:
             logger.error(f"Error initializing schema knowledge: {e}")
             return False
     
-    def _get_formatted_history(self) -> str:
-        """
-        Get formatted conversation history
-        
-        Returns:
-            String representation of the conversation history
-        """
-        if not self.messages:
-            return ""
-        
-        formatted_history = ""
-        for message in self.messages:
-            if isinstance(message, HumanMessage):
-                formatted_history += f"User: {message.content}\n"
-            elif isinstance(message, AIMessage):
-                formatted_history += f"AI: {message.content}\n"
-            elif isinstance(message, SystemMessage):
-                formatted_history += f"System: {message.content}\n"
-        
-        return formatted_history
-    
     def execute_sql_query(self, query):
         """Execute a SQL query on the connected database."""
-        if not self.connected:
+        if not self.connection:
             logger.error("Cannot execute query: Not connected to database")
-            return {'error': 'Not connected to database'}
+            return {'success': False, 'error': 'Not connected to database'}
         
         try:
-            # Check if we need to ROLLBACK first (if query doesn't already start with ROLLBACK)
-            if not query.strip().upper().startswith("ROLLBACK"):
-                try:
-                    # Check transaction status - a simple query that will fail if transaction is aborted
-                    self.cur.execute("SELECT 1")
-                except Exception as e:
-                    if "current transaction is aborted" in str(e).lower():
-                        print("Transaction is aborted. Executing ROLLBACK before continuing.")
-                        # Get a new connection to reset the transaction
-                        self.connection.rollback()
+            # Create a cursor for this query
+            cursor = self.connection.cursor()
             
-            # Now execute the actual query
-            self.cur.execute(query)
+            # Execute the query
+            cursor.execute(query)
             
-            # Get column names
-            columns = [desc[0] for desc in self.cur.description] if self.cur.description else []
-            
-            # Fetch results
-            results = self.cur.fetchall()
-            
-            # Commit the transaction if it was a successful query
-            self.connection.commit()
-            
-            # Format results as dictionary
-            formatted_results = []
-            for row in results:
-                formatted_row = {}
-                for i, value in enumerate(row):
-                    formatted_row[columns[i]] = value
-                formatted_results.append(formatted_row)
-            
-            return {
-                'success': True,
-                'column_names': columns,
-                'rows': formatted_results,
-                'row_count': len(formatted_results)
-            }
+            # Check if the query returns results
+            if cursor.description is not None:
+                # Get column names
+                columns = [desc[0] for desc in cursor.description]
+                
+                # Fetch results
+                rows = cursor.fetchall()
+                
+                # Commit any changes (this is safe even for SELECT queries)
+                self.connection.commit()
+                
+                return {
+                    'success': True,
+                    'columns': columns,
+                    'rows': rows,
+                    'row_count': len(rows)
+                }
+            else:
+                # No results (likely an INSERT, UPDATE, DELETE)
+                # Commit the changes
+                self.connection.commit()
+                
+                return {
+                    'success': True,
+                    'columns': [],
+                    'rows': [],
+                    'row_count': 0
+                }
         
         except Exception as e:
             logger.error(f"Error executing query: {e}")
@@ -467,103 +473,60 @@ class ChatManager:
                 'error': str(e)
             }
     
-    def process_query(self, sql_query: str) -> Dict[str, Any]:
+    def generate_llm_response(self, prompt: str) -> str:
         """
-        Execute a SQL query directly and return the results.
+        Generate a response from the language model.
         
         Args:
-            sql_query: SQL query to execute
+            prompt: The prompt to send to the language model
             
         Returns:
-            Dictionary with query results
+            Response from the language model
         """
-        import pandas as pd
-        
-        if not self.connection:
-            return {"success": False, "error": "Not connected to database"}
-        
         try:
-            # Execute the query
-            result = pd.read_sql_query(sql_query, self.connection)
-            return {"success": True, "result": result}
-        except Exception as e:
-            error_message = str(e)
-            print(f"Error executing query: {error_message}")
-            return {"success": False, "error": error_message}
-    
-    def _get_simple_schema_info(self):
-        """Get simplified schema information when full extraction fails"""
-        if not self.connected:
-            return ""
-        
-        try:
-            # Get all tables
-            self.cur.execute("""
-                SELECT table_name 
-                FROM information_schema.tables 
-                WHERE table_schema = 'public'
-            """)
-            tables = [table[0] for table in self.cur.fetchall()]
-            
-            if not tables:
-                return ""
-            
-            # Build simple schema information
-            schema_info = []
-            for table in tables:
-                # Get columns
-                self.cur.execute(f"""
-                    SELECT column_name, data_type
-                    FROM information_schema.columns
-                    WHERE table_schema = 'public' AND table_name = '{table}'
-                """)
-                columns = self.cur.fetchall()
+            # Initialize the LLM if not already done
+            if not hasattr(self, 'llm'):
+                from langchain_together import Together
+                from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
                 
-                table_info = f"Table: {table}\nColumns:\n"
-                for col_name, col_type in columns:
-                    table_info += f"  - {col_name}: {col_type}\n"
+                # Get API key with proper priority order:
+                # 1. Constructor-provided api_key
+                # 2. Environment variable TOGETHER_API_KEY
+                # 3. Fall back to None (will cause an error if not provided elsewhere)
+                api_key = self.api_key
+                if api_key is None:
+                    api_key = os.environ.get("TOGETHER_API_KEY")
+                    if api_key is None:
+                        raise ValueError(
+                            "No API key provided. Please provide an API key via the constructor "
+                            "or set the TOGETHER_API_KEY environment variable."
+                        )
                 
-                # Get sample row if available
-                try:
-                    self.cur.execute(f"SELECT * FROM {table} LIMIT 1")
-                    sample = self.cur.fetchone()
-                    if sample:
-                        col_names = [desc[0] for desc in self.cur.description]
-                        table_info += "Sample Data (1 row):\n  - "
-                        sample_values = []
-                        for i, val in enumerate(sample):
-                            sample_values.append(f"{col_names[i]}={val}" if val is not None else f"{col_names[i]}=NULL")
-                        table_info += ", ".join(sample_values) + "\n"
-                except:
-                    pass
-                
-                schema_info.append(table_info)
+                # Initialize the LLM
+                self.llm = Together(
+                    model=self.model_name,
+                    temperature=self.temperature,
+                    together_api_key=api_key,
+                    max_tokens=self.max_tokens,
+                    **self.kwargs
+                )
             
-            return "\n".join(schema_info)
+            # Generate response
+            from langchain_core.messages import HumanMessage
+            
+            # Handle the prompt as either a string or a message
+            if isinstance(prompt, str):
+                response = self.llm.invoke(prompt)
+            else:
+                response = self.llm.invoke(prompt)
+            
+            return response
         except Exception as e:
-            logger.error(f"Error in simple schema extraction: {e}")
-            return ""
-    
-    def _save_schema_to_cache(self, schema):
-        """Save schema information to disk cache"""
-        if not self.db_name:
-            return
-        
-        try:
-            schema_cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'schema_cache')
-            os.makedirs(schema_cache_dir, exist_ok=True)
-            
-            schema_cache_file = os.path.join(schema_cache_dir, f"{self.db_name}_schema.json")
-            
-            cache_data = {
-                'schema': schema,
-                'timestamp': time.time(),
-                'db_name': self.db_name
-            }
-            
-            with open(schema_cache_file, 'w') as f:
-                json.dump(cache_data, f, indent=2)
-            
-            logger.info(f"Saved schema for {self.db_name} to disk cache")
-        except Exception as e:
-            logger.warning(f"Failed to save schema to disk cache: {e}") 
+            logger.error(f"Error generating LLM response: {e}")
+            # Add retry mechanism for common errors like rate limiting
+            if "rate limit" in str(e).lower() or "too many requests" in str(e).lower():
+                import time
+                logger.info("Rate limit hit, waiting 5 seconds and retrying...")
+                time.sleep(5)
+                return self.generate_llm_response(prompt)
+            raise 

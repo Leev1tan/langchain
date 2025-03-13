@@ -1,151 +1,101 @@
-# MAC-SQL: Memory, Attention, and Composition for Text-to-SQL
+# MAC-SQL: Multi-Agent Collaborative Framework for Text-to-SQL
 
-MAC-SQL is an innovative framework that uses Memory, Attention, and Composition techniques for text-to-SQL generation. 
-This project implements a multi-agent collaborative architecture based on the [MAC-SQL paper](https://arxiv.org/abs/2312.11242) using LangChain, Together AI models, and provides a Streamlit interface for interaction.
+![MAC-SQL Architecture](images/mac-sql-architecture.png)
 
-## Features
+This project implements MAC-SQL, a novel multi-agent collaborative framework for Text-to-SQL generation. MAC-SQL uses multiple specialized agents that work together to generate accurate SQL queries from natural language questions.
 
-- **Multi-Agent Architecture**: Three specialized agents work together
-  - **Selector**: Handles schema and example selection
-  - **Decomposer**: Understands questions and plans queries
-  - **Refiner**: Generates and refines SQL queries
-- **Memory**: Maintains conversation context and example store
-- **Attention**: Focuses on relevant schema information
-- **Composition**: Multi-step process for SQL generation
-- **Evaluation**: Benchmark evaluation on mini-bird dataset
-- **Database Support**: Works with PostgreSQL databases
-- **User Interface**: Streamlit web interface with chat interface
+## Overview
 
-## Quick Start
+MAC-SQL addresses challenges in Text-to-SQL conversion through a collaborative multi-agent approach:
 
-### Setup
+1. **Decomposer Agent**: Core agent for Text-to-SQL generation with few-shot chain-of-thought reasoning
+2. **Selector Agent**: Identifies relevant schema elements based on the user query
+3. **Refiner Agent**: Refines and fixes SQL queries when execution errors occur
 
-1. Create and activate virtual environment:
-   ```
-   python -m venv .venv
-   .\.venv\Scripts\activate  # Windows
-   source .venv/bin/activate  # Linux/Mac
-   ```
+## Requirements
 
-2. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
+- Python 3.8+
+- PostgreSQL database (primary support)
+- SQLite database (for BIRD benchmark evaluation)
+- Language model API access (Meta Llama 3, Together AI, etc.)
 
-3. Set up the database:
-   ```
-   python run_mac_sql.py --setup
-   ```
-   
-   This will import the mini-bird benchmark databases into PostgreSQL.
+## Installation
 
-### Running the Application
+```bash
+# Clone the repository
+git clone https://github.com/leev1tan/langchain.git
+cd langchain
 
-Use the `run_mac_sql.py` script for easy execution:
+# Install dependencies
+pip install -r requirements.txt
 
-```
-# Start the Streamlit UI
-python run_mac_sql.py --ui
-
-# Run benchmark evaluation
-python run_mac_sql.py --evaluate
-
-# Run a single query
-python run_mac_sql.py --question "How many players are there in the card games database?"
+# Set up environment variables
+export TOGETHER_API_KEY=your_api_key_here
 ```
 
-Alternatively, you can directly run:
+## Usage
 
+### Basic Usage
+
+```python
+from mac_sql import MACSQL
+
+# Initialize MAC-SQL
+mac_sql = MACSQL(model_name="meta-llama/Llama-3.3-70B-Instruct-Turbo")
+
+# Connect to database
+mac_sql.connect_to_database("your_database_path")
+
+# Execute query
+sql_query, results = mac_sql.process_query("Show me all employees in the Sales department")
+print(f"SQL Query: {sql_query}")
+print(f"Results: {results}")
 ```
-# Start the Streamlit UI
-streamlit run app.py
 
-# Run evaluation
-python evaluate.py --benchmark dev_20240627/dev.json --samples_per_db 5
+### Evaluation on BIRD Benchmark
+
+```bash
+python evaluate_bird.py --samples-per-db 5 --visualize
 ```
 
 ## Project Structure
 
 ```
 .
-├── core/                      # Core components
-│   ├── __init__.py           # Package initialization
-│   ├── agents.py             # Agent implementations
-│   └── chat_manager.py       # Agent coordination
-├── mac_sql.py                # Main MAC-SQL class
-├── app.py                    # Streamlit UI
-├── db_setup.py               # Database setup script
-├── run_mac_sql.py            # Convenience runner script
-├── evaluate.py               # Evaluation script
-├── requirements.txt          # Project dependencies
-├── results/                  # Evaluation results directory
-└── minidev/                  # Mini-bird benchmark dataset
+├── core/                       # Core components
+│   ├── agents.py               # Agent implementations
+│   ├── chat_manager.py         # Manages communication between agents
+│   └── config.py               # Configuration settings
+├── evaluate_bird.py            # BIRD benchmark evaluation script
+├── mac_sql.py                  # Main MAC-SQL implementation
+├── requirements.txt            # Project dependencies
+└── README.md                   # Project documentation
 ```
 
-## Technical Details
+## Configuration
 
-### Multi-Agent Architecture
-
-The MAC-SQL framework features three specialized agents:
-
-1. **Selector Agent**:
-   - Focuses on selecting relevant schema information
-   - Identifies similar examples from past queries
-   - Reduces the size of context sent to other agents
-
-2. **Decomposer Agent**:
-   - Understands what the question is asking for
-   - Breaks down complex questions into parts
-   - Creates a step-by-step plan for SQL generation
-
-3. **Refiner Agent**:
-   - Generates SQL based on the understanding and plan
-   - Verifies SQL syntax and logic
-   - Refines queries when errors occur
-
-### Workflow
-
-1. User submits a natural language question
-2. **Selector** identifies relevant schema and examples
-3. **Decomposer** analyzes the question and creates a query plan
-4. **Refiner** generates, verifies, and refines the SQL query
-5. The query is executed against the database
-6. Results are presented to the user
-
-## Database Setup
-
-To use MAC-SQL, you'll need to set up a PostgreSQL database and import the mini-bird benchmark datasets:
-
-1. Ensure PostgreSQL is installed and running
-2. Configure connection details in `core/chat_manager.py` if needed
-3. Run the setup script:
-   ```
-   python run_mac_sql.py --setup
-   ```
-
-## Benchmark Evaluation
-
-The agent is evaluated on the mini-bird benchmark which provides a set of natural language questions and expected SQL queries for different databases.
-
-Evaluation metrics include:
-- **Execution Accuracy**: Percentage of queries that produce correct results
-- **Per-database Performance**: Breakdown of accuracy by database
-
-## Requirements
-
-- Python 3.8+
-- PostgreSQL server
-- Dependencies listed in requirements.txt
+Set your API key in one of the following ways:
+1. Environment variable: `TOGETHER_API_KEY`
+2. Configuration file: Create `config.json` with your API key
+3. Pass directly to the MACSQL constructor: `MACSQL(api_key="your_api_key")`
 
 ## Citation
 
-If you find this implementation useful, please cite the original MAC-SQL paper:
+If you use MAC-SQL in your research, please cite the original paper:
 
-```
-@inproceedings{macsql-2025,
+```bibtex
+@article{wang2023macsql,
   title={MAC-SQL: A Multi-Agent Collaborative Framework for Text-to-SQL},
-  author={Wang, Bing and Ren, Changyu and Yang, Jian and others},
-  booktitle={Proceedings of the International Conference on Computational Linguistics},
-  year={2025}
+  author={Wang, Bing and Ren, Changyu and Yang, Jian and Liang, Xinnian and Bai, Jiaqi and Chai, Linzheng and Yan, Zhao and Zhang, Qian-Wen and Yin, Di and Sun, Xing and Li, Zhoujun},
+  journal={arXiv preprint arXiv:2312.11242},
+  year={2023}
 }
-``` 
+```
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgements
+
+This implementation is based on the paper "MAC-SQL: A Multi-Agent Collaborative Framework for Text-to-SQL" by Wang et al. (2023) available at [arXiv:2312.11242](https://arxiv.org/abs/2312.11242). 

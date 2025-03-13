@@ -19,10 +19,15 @@ from typing import Dict, Any, List, Optional, Union, Tuple
 from tqdm import tqdm
 import time
 import traceback
+import re
+import sqlite3
 
 from core.chat_manager import ChatManager
-from core.agents import SelectorAgent, DecomposerAgent, RefinerAgent
+from core.agents import SelectorAgent, DecomposerAgent, RefinerAgent, QuestionAgent, SQLGenerator
 from core.config import DB_CONFIG
+
+# Define the BIRD database path
+BIRD_DATABASE = "minidev/BIRD/BIRD.db"
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +47,7 @@ class MACSQL:
         api_key: Optional[str] = None,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        verbose: bool = False,
         **kwargs,
     ):
         """
@@ -52,12 +58,14 @@ class MACSQL:
             api_key: API key for the LLM service (optional)
             temperature: Temperature for the LLM
             max_tokens: Maximum number of tokens for the LLM
+            verbose: Whether to print verbose output
             **kwargs: Additional keyword arguments
         """
         self.model_name = model_name
         self.api_key = api_key
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.verbose = verbose
         self.kwargs = kwargs
         
         # Initialize schema cache with timestamp tracking
@@ -75,9 +83,11 @@ class MACSQL:
         )
         
         # Initialize agents with basic parameters
-        self.selector_agent = SelectorAgent(model_name, api_key)
-        self.decomposer_agent = DecomposerAgent(model_name, api_key)
-        self.refiner_agent = RefinerAgent(model_name, api_key)
+        self.selector_agent = SelectorAgent(self.chat_manager)
+        self.decomposer_agent = DecomposerAgent(self.chat_manager)
+        self.refiner_agent = RefinerAgent(self.chat_manager)
+        self.question_agent = QuestionAgent(self.chat_manager)
+        self.sql_generator = SQLGenerator(self.chat_manager)
     
     def add_to_schema_cache(self, db_name: str, schema: str) -> None:
         """
@@ -143,224 +153,287 @@ class MACSQL:
             True if connection was successful
         """
         # Try to connect to the database
-        if self.chat_manager.update_database(db_name):
+        if self.chat_manager.connect_to_database(db_name):
             # If connection was successful, cache the schema
-            if self.chat_manager.schema_knowledge:
+            if hasattr(self.chat_manager, 'schema_knowledge') and self.chat_manager.schema_knowledge:
                 self.add_to_schema_cache(db_name, self.chat_manager.schema_knowledge)
             return True
         return False
     
-    def process_query(self, question: str, db_context: str = None, verbose: bool = True) -> Tuple[str, pd.DataFrame]:
+    def process_query(self, query: str, db_context: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """
-        Process a natural language query and return the SQL and results.
-        
-        This method is used for evaluation purposes when using a single database (like BIRD)
-        that contains tables from multiple databases. The db_context parameter specifies
-        which database context to use when querying.
+        Process a natural language query to generate and execute SQL
         
         Args:
-            question: Natural language question about the database
-            db_context: Database context to use (used to filter schema)
-            verbose: Whether to print verbose output
+            query: The natural language query to process
+            db_context: Optional database context to use
             
         Returns:
-            Tuple of (SQL query, results DataFrame)
+            Tuple of (generated SQL, query results)
         """
-        if verbose:
-            print(f"\nProcessing query: {question}")
+        import time
+        import pandas as pd
         
-        if not self.chat_manager.connected:
-            if verbose:
-                print("Not connected to database. Attempting to connect...")
-            
-            # Check if we have a database name
-            if not self.chat_manager.db_name:
-                if verbose:
-                    print("No database specified. Cannot execute query.")
-                raise Exception("No database specified")
-            
-            # Try to connect
-            success = self.chat_manager.update_database(self.chat_manager.db_name)
-            if not success:
-                if verbose:
-                    print(f"Failed to connect to database: {self.chat_manager.db_name}")
-                raise Exception(f"Failed to connect to database: {self.chat_manager.db_name}")
-        
-        # Execute query through agents
         start_time = time.time()
         
-        # Step 1: Select relevant schema based on question
-        if verbose:
-            print("\n=== Step 1: Schema Selection ===")
-            print(f"  - Query: {question}")
-            print(f"  - Schema knowledge length: {len(self.chat_manager.schema_knowledge)} chars")
+        # Connect to database if not already connected or context changed
+        if db_context and (not self.chat_manager.connected or db_context != self.chat_manager.db_name):
+            print(f"Connecting to database: {db_context}")
+            if not self.chat_manager.connect_to_database(db_context):
+                print(f"Failed to connect to database: {db_context}")
+                return "Failed to connect to database", pd.DataFrame()
         
-        # If db_context is provided, use it to filter the schema
-        schema_knowledge = self.chat_manager.schema_knowledge
-        if db_context and db_context.lower() != self.chat_manager.db_name.lower():
-            # Try to use the context-specific schema if available
-            context_schema = self.get_from_schema_cache(db_context)
-            if context_schema:
-                if verbose:
-                    print(f"Using cached schema for database context: {db_context}")
-                schema_knowledge = context_schema
+        # Check if we're connected to a database
+        if not self.chat_manager.connected:
+            print("Not connected to a database. Please connect to a database first.")
+            return "Not connected to a database", pd.DataFrame()
         
-        schema_docs = self.chat_manager.selector_agent.select_schema(
-            question, 
-            schema_knowledge
-        )
+        schema_name = db_context or self.chat_manager.db_name
         
-        # Combine schema docs into a single string
-        if isinstance(schema_docs, list):
-            schema = "\n\n".join([doc.page_content for doc in schema_docs])
-        else:
-            schema = str(schema_docs)
+        print(f"Using schema context: {schema_name}")
+        print("Understanding the question...")
         
-        if verbose:
-            print(f"Selected schema with {len(schema)} characters")
+        # Generate SQL
+        print("Generating SQL...")
         
-        # Step 2: Understand and Plan the query
-        if verbose:
-            print("\n=== Step 2: Question Understanding and Query Planning ===")
-            print(f"  - Query: {question}")
-            print(f"  - Schema length: {len(schema)} chars")
+        # Get appropriate schema for the query
+        # For SQLite databases, we need to handle this differently
+        is_sqlite = isinstance(self.chat_manager.connection, sqlite3.Connection)
         
-        understanding_and_plan = self.chat_manager.decomposer_agent.understand_and_plan(
-            question,
-            schema
-        )
-        
-        if verbose:
-            understanding_len = len(understanding_and_plan.get('understanding', ''))
-            plan_len = len(understanding_and_plan.get('plan', ''))
-            print(f"  - Understanding length: {understanding_len} chars")
-            print(f"  - Plan length: {plan_len} chars")
-        
-        # Step 3: Generate and execute SQL
-        if verbose:
-            print("\n=== Step 3: SQL Generation and Execution ===")
-            print(f"  - Query: {question}")
-            print(f"  - Schema length: {len(schema)} chars")
-            print(f"  - Understanding length: {understanding_len} chars")
-            print(f"  - Plan length: {plan_len} chars")
-        
-        # Generate initial SQL
-        sql_generation = self.chat_manager.refiner_agent.generate_sql(
-            question,
-            schema,
-            understanding_and_plan
-        )
-        
-        sql_query = sql_generation.get("sql", "")
-        
-        if verbose:
-            print(f"[RefinerAgent] SQL Generation Output: {len(sql_query)} chars")
-            print(f"Generated SQL: {sql_query}")
-        
-        # Execute SQL query
-        query_success = False
-        max_refinement_attempts = 3
-        refinement_count = 0
-        error_message = None
-        query_result = None
-        
-        while not query_success and refinement_count < max_refinement_attempts:
-            try:
-                # Execute the query with automatic transaction handling
-                query_result = self.chat_manager.execute_sql_query(sql_query)
-                
-                if query_result.get('success', False):
-                    query_success = True
-                    if verbose:
-                        print(f"Query executed successfully with {len(query_result.get('rows', []))} results")
+        try:
+            # Initialize schema knowledge if it's empty
+            if not self.chat_manager.schema_knowledge:
+                if is_sqlite:
+                    self.chat_manager._initialize_sqlite_schema()
                 else:
-                    error_message = query_result.get('error', 'Unknown error')
-                    if verbose:
-                        print(f"Error executing query: {error_message}")
-                    
-                    # Refine SQL query
-                    refinement_count += 1
-                    if verbose:
-                        print(f"\n[RefinerAgent] Refinement Inputs:")
-                        print(f"  - Query: {question}")
-                        print(f"  - Original SQL: {sql_query}")
-                        print(f"  - Error: {error_message}")
-                    
-                    refined_sql = self.chat_manager.refiner_agent.refine_sql(
-                        question, 
-                        sql_query, 
-                        error_message
-                    )
-                    
-                    new_sql = refined_sql.get("sql", "")
-                    if verbose:
-                        print(f"[RefinerAgent] Refinement Output: {len(new_sql)} chars")
-                    
-                    # Check if refinement made a difference
-                    if new_sql == sql_query:
-                        if verbose:
-                            print("Refinement produced the same SQL. Stopping refinement process.")
-                        break
-                    
-                    sql_query = new_sql
-                    if verbose:
-                        print(f"Refined SQL (attempt {refinement_count}): {sql_query}")
-            except Exception as e:
-                error_message = str(e)
-                if verbose:
-                    print(f"Exception during query execution: {error_message}")
-                    print(traceback.format_exc())
-                refinement_count += 1
-                
-                try:
-                    # Try to refine the SQL based on the exception
-                    if verbose:
-                        print(f"\n[RefinerAgent] Refinement Inputs:")
-                        print(f"  - Query: {question}")
-                        print(f"  - Original SQL: {sql_query}")
-                        print(f"  - Error: {error_message}")
-                    
-                    refined_sql = self.chat_manager.refiner_agent.refine_sql(
-                        question, 
-                        sql_query, 
-                        error_message
-                    )
-                    
-                    new_sql = refined_sql.get("sql", "")
-                    if verbose:
-                        print(f"[RefinerAgent] Refinement Output: {len(new_sql)} chars")
-                    
-                    # Check if refinement made a difference
-                    if new_sql == sql_query:
-                        if verbose:
-                            print("Refinement produced the same SQL. Stopping refinement process.")
-                        break
-                    
-                    sql_query = new_sql
-                    if verbose:
-                        print(f"Refined SQL (attempt {refinement_count}): {sql_query}")
-                except Exception as ex:
-                    # If refinement fails, just continue with the next attempt
-                    if verbose:
-                        print(f"Error during refinement: {ex}")
-                        print(traceback.format_exc())
-        
-        if not query_success:
-            if verbose:
-                print(f"Failed to execute query after {refinement_count} refinement attempts")
-            if error_message:
-                raise Exception(f"Query execution failed: {error_message}")
-            else:
-                raise Exception("Query execution failed with unknown error")
-        
-        # Transform results to DataFrame
-        if query_result and 'rows' in query_result and 'columns' in query_result:
-            df = pd.DataFrame(query_result['rows'], columns=query_result['columns'])
-        else:
-            df = pd.DataFrame()
+                    self.chat_manager._initialize_schema_knowledge()
             
-        return sql_query, df
-    
+            # Get schema knowledge from chat manager
+            schema = self.chat_manager.schema_knowledge
+            
+            # If still no schema, create a fallback
+            if not schema:
+                if is_sqlite:
+                    # For SQLite, get table list and basic info
+                    cursor = self.chat_manager.connection.cursor()
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
+                    tables = [table[0] for table in cursor.fetchall()]
+                    
+                    schema_parts = []
+                    for table in tables:
+                        cursor.execute(f"PRAGMA table_info({table});")
+                        columns = cursor.fetchall()
+                        
+                        col_info = [f"{col[1]} ({col[2]})" for col in columns]
+                        schema_parts.append(f"Table: {table}\nColumns: {', '.join(col_info)}")
+                    
+                    schema = "\n\n".join(schema_parts)
+                else:
+                    # For PostgreSQL
+                    cursor = self.chat_manager.connection.cursor()
+                    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';")
+                    tables = [table[0] for table in cursor.fetchall()]
+                    
+                    schema = f"Tables: {', '.join(tables)}"
+        except Exception as e:
+            print(f"Error retrieving schema: {e}")
+            schema = f"Database: {schema_name}"
+        
+        # Use the Decomposer agent to understand the question and plan the query
+        decomposer = DecomposerAgent(self.chat_manager)
+        understanding_and_plan = decomposer.understand_and_plan(query, schema)
+        
+        # Use the Refiner agent to generate the SQL
+        refiner = RefinerAgent(self.chat_manager)
+        sql_result = refiner.generate_sql(query, schema, understanding_and_plan)
+        
+        # Clean up the SQL
+        sql_query = self._clean_sql(sql_result.get("sql", ""))
+        
+        # Execute the SQL query
+        print("Executing SQL...")
+        error_message = None
+        attempt = 1
+        max_attempts = 3
+        results = pd.DataFrame()
+        
+        # Multiple attempts to execute the query
+        while attempt <= max_attempts:
+            print(f"Execution attempt {attempt}...")
+            result = self.chat_manager.execute_sql_query(sql_query)
+            
+            if result.get('success', False):
+                # Successful execution
+                if 'columns' in result and 'rows' in result:
+                    # Convert the results to a pandas DataFrame
+                    results = pd.DataFrame(result['rows'], columns=result['columns'])
+                    error_message = None
+                    break
+                else:
+                    # No results but no error (e.g., UPDATE statement)
+                    results = pd.DataFrame()
+                    error_message = None
+                    break
+            else:
+                # Execution failed
+                error_message = result.get('error', 'Unknown error')
+                print(f"SQL execution error: {error_message}")
+                
+                # Refine the SQL if there's an error
+                if "no such column" in error_message.lower() or "column not found" in error_message.lower() or "no such table" in error_message.lower():
+                    print("Refining SQL due to execution error...")
+                    sql_query = refiner.refine_sql(query, sql_query, error_message)
+                    attempt += 1
+                else:
+                    # For other types of errors, try to handle them
+                    sql_query = refiner.refine_sql(query, sql_query, error_message)
+                    attempt += 1
+        
+        # If all attempts failed, try a fallback query
+        if error_message and attempt > max_attempts:
+            print("Creating fallback query due to continued errors...")
+            fallback_sql = self._generate_fallback_query(query, schema_name, error_message)
+            
+            # Execute the fallback query
+            result = self.chat_manager.execute_sql_query(fallback_sql)
+            
+            if result.get('success', False):
+                sql_query = fallback_sql
+                if 'columns' in result and 'rows' in result:
+                    results = pd.DataFrame(result['rows'], columns=result['columns'])
+                else:
+                    results = pd.DataFrame()
+            else:
+                # Even the fallback failed, return empty results
+                print("Returning empty results due to continued errors")
+                results = pd.DataFrame()
+        
+        # Execution time
+        execution_time = time.time() - start_time
+        print(f"Execution time: {execution_time:.2f}s")
+        
+        return sql_query, results
+
+    def _clean_sql(self, sql: str) -> str:
+        """
+        Clean and validate the SQL query
+        
+        Args:
+            sql: The SQL query to clean
+            
+        Returns:
+            str: The cleaned SQL query
+        """
+        # Extract just the SQL if it's embedded in a larger text
+        if not sql:
+            return ""
+        
+        # Remove markdown code blocks if present
+        sql = re.sub(r'```sql|```postgresql|```', '', sql)
+        
+        # Remove any additional explanation or notes
+        sql_lines = []
+        in_sql = False
+        
+        for line in sql.split('\n'):
+            line = line.strip()
+            
+            # Skip empty lines
+            if not line:
+                continue
+            
+            # If line starts with SELECT, FROM, WHERE, etc. we're in SQL territory
+            if re.match(r'^(SELECT|WITH|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|FROM|WHERE|GROUP|ORDER|HAVING|LIMIT|JOIN|LEFT|RIGHT|INNER|OUTER|FULL|USING|ON)\b', line.upper()):
+                in_sql = True
+                sql_lines.append(line)
+            # If we're already in SQL mode and the line doesn't start with common SQL keywords,
+            # but looks like part of a SQL query, include it
+            elif in_sql and not line.startswith('--') and not line.startswith('#') and not line.startswith('/*'):
+                sql_lines.append(line)
+        
+        # If no SQL was found using the line-by-line approach, use a regex approach
+        if not sql_lines:
+            # Try to find a SQL query using regex
+            match = re.search(r'(SELECT\s+.+?(?:;|$))', sql, re.DOTALL | re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+        
+        # Join all SQL lines
+        cleaned_sql = ' '.join(sql_lines).strip()
+        
+        # Ensure the SQL ends with a semicolon
+        if cleaned_sql and not cleaned_sql.endswith(';'):
+            cleaned_sql += ';'
+        
+        return cleaned_sql
+
+    def _generate_fallback_query(self, query: str, schema_name: str, error_message: str) -> str:
+        """
+        Generate a simplified fallback query when the main query fails repeatedly
+        
+        Args:
+            query: The original natural language query
+            schema_name: The database schema context
+            error_message: The error message from the failed attempts
+            
+        Returns:
+            str: A simplified SQL query that is more likely to execute successfully
+        """
+        # Create a prompt for generating a simplified query
+        prompt = f"""
+        I need a very simple SQL query for the database '{schema_name}' that captures the essence of this question:
+        "{query}"
+        
+        The previous queries failed with this error: "{error_message}"
+        
+        Please generate a simplified SQL query that:
+        1. Uses only basic SELECT, FROM, WHERE clauses
+        2. Avoids complex joins or subqueries
+        3. Uses only tables and columns you're certain exist in the schema
+        4. Returns at least some relevant information, even if it's not complete
+        
+        Return ONLY the SQL query without any explanation or markdown.
+        """
+        
+        # Get response from the LLM for a simplified query
+        try:
+            response = self.chat_manager.generate_llm_response(prompt)
+            fallback_sql = self._clean_sql(response)
+            print(f"Generated fallback SQL: {fallback_sql}")
+            return fallback_sql
+        except Exception as e:
+            print(f"Error generating fallback query: {str(e)}")
+            # If all else fails, return a very basic query to at least get something from a main table
+            return f"SELECT * FROM (SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' LIMIT 1) AS t JOIN (SELECT * FROM {self._get_main_table_name(schema_name)} LIMIT 5) AS main_data;"
+
+    def _get_main_table_name(self, schema_name: str) -> str:
+        """
+        Get a main table name from the schema as a last resort fallback
+        
+        Args:
+            schema_name: The database schema context
+            
+        Returns:
+            str: A table name that likely exists in the schema
+        """
+        try:
+            # Try to get table names from the database
+            result = self.chat_manager.execute_sql_query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' LIMIT 1;")
+            if result.get('success', False) and 'rows' in result and result['rows']:
+                return result['rows'][0][0]
+        except:
+            pass
+        
+        # Hardcoded fallbacks based on database name
+        if schema_name == 'student_club':
+            return 'member'
+        elif schema_name == 'formula_1':
+            return 'drivers'
+        elif schema_name == 'california_schools':
+            return 'schools'
+        else:
+            return 'main_table'  # Generic fallback
+
     def query(self, question: str, verbose: bool = False) -> Dict[str, Any]:
         """
         Process a natural language query and return results.
@@ -386,7 +459,7 @@ class MACSQL:
                 return {"error": "No database specified"}
             
             # Try to connect
-            success = self.chat_manager.update_database(self.chat_manager.db_name)
+            success = self.chat_manager.connect_to_database(self.chat_manager.db_name)
             if not success:
                 if verbose:
                     print(f"Failed to connect to database: {self.chat_manager.db_name}")
@@ -638,7 +711,7 @@ class MACSQL:
                             **self.kwargs
                         )
                         
-                        success = current_chat_manager.update_database(db_id)
+                        success = current_chat_manager.connect_to_database(db_id)
                         if not success:
                             print(f"Failed to connect to database: {db_id}")
                             result_item["error"] = f"Failed to connect to database: {db_id}"

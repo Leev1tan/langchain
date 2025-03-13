@@ -15,75 +15,81 @@ import re
 import json
 import logging
 import time
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Union
 from langchain_together import Together
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
-from langchain_core.prompts import PromptTemplate
+from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
 import traceback
 
-from core.config import DB_CONFIG
+from core.config import DB_CONFIG, PROMPTS
 
 logger = logging.getLogger(__name__)
 
 
 class BaseAgent:
-    """Base class for all MAC-SQL agents"""
+    """
+    Base agent class with common functionality for all agents
+    """
     
-    def __init__(
-        self,
-        model_name: str = "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-        api_key: Optional[str] = None,
-        temperature: float = 0.0,
-        max_tokens: int = 1024,
-        **kwargs,
-    ):
-        """Initialize the agent."""
-        self.model_name = model_name
-        self.temperature = temperature
-        self.max_tokens = max_tokens
+    def __init__(self, chat_manager):
+        """
+        Initialize the agent with a chat manager
         
-        # Set default API key if none provided
-        if api_key is None:
-            api_key = "6e4593b7c0e0279476b65f144273d1ee972a47e3eb543c9649b36aaf6c114a82"
-        
-        self.llm = Together(
-            model=model_name,
-            temperature=temperature,
-            together_api_key=api_key,
-            max_tokens=max_tokens,
-            **kwargs,
-        )
-        self.parser = StrOutputParser()
-        self.name = "BaseAgent"
+        Args:
+            chat_manager: The chat manager to use for communication with the LLM
+        """
+        self.chat_manager = chat_manager
     
     def _clean_response(self, response: str) -> str:
-        """Clean up LLM response (remove markdown, etc.)"""
-        # Remove markdown code blocks
-        response = re.sub(r"```sql|```", "", response)
-        # Remove leading/trailing whitespace
-        response = response.strip()
+        """
+        Clean the response by removing markdown artifacts and normalizing whitespace
+        
+        Args:
+            response: Raw response from LLM
+            
+        Returns:
+            Cleaned response
+        """
+        # Remove code blocks if present
+        if "```" in response:
+            # Extract content from code blocks
+            matches = re.findall(r"```(?:\w+)?\s*([\s\S]*?)```", response)
+            if matches:
+                # Join all code blocks found
+                response = "\n\n".join(matches)
+        
+        # Normalize whitespace
+        response = re.sub(r'\s+', ' ', response).strip()
+        
         return response
 
 
 class SelectorAgent(BaseAgent):
-    """Agent responsible for selecting relevant schema based on the user query."""
+    """
+    Agent responsible for selecting relevant schema and examples
+    """
     
-    def __init__(self, model_name, api_key):
-        super().__init__(model_name, api_key)
-        self.name = "Selector"
-
-    def select_schema(self, query, schema_knowledge):
+    def __init__(self, chat_manager):
         """
-        Select relevant schema based on user query.
+        Initialize the selector agent
         
         Args:
-            query: User natural language query
-            schema_knowledge: Database schema information
+            chat_manager: The chat manager to use for communication with the LLM
+        """
+        super().__init__(chat_manager)
+    
+    def select_schema(self, query, schema_knowledge):
+        """
+        Select relevant parts of the schema based on the query
+        
+        Args:
+            query: Natural language query
+            schema_knowledge: Full schema information
             
         Returns:
-            List of relevant schema documents
+            Selected schema parts relevant to the query
         """
         print(f"\n[SelectorAgent] Inputs:")
         print(f"  - Query: {query}")
@@ -145,7 +151,7 @@ ANALYSIS:
 """
         try:
             print(f"[SelectorAgent] Sending prompt to LLM ({len(prompt)} chars)")
-            result = self.llm.invoke(prompt)
+            result = self.chat_manager.generate_llm_response(prompt)
             logger.info(f"Schema selection completed: {len(schema_docs)} tables available")
             
             # Parse the response to extract table names
@@ -213,7 +219,7 @@ PROVIDE ONLY THE NUMBERS SEPARATED BY COMMAS, like: 0, 2, 3
         
         # Get the response from the LLM
         try:
-            selection_result = self.llm.invoke(examples_prompt)
+            selection_result = self.chat_manager.generate_llm_response(examples_prompt)
             
             # Parse the indices from the response
             indices = []
@@ -242,8 +248,14 @@ class DecomposerAgent(BaseAgent):
     2. Planning how to retrieve the requested information
     """
     
-    def __init__(self, model_name, api_key):
-        super().__init__(model_name, api_key)
+    def __init__(self, chat_manager):
+        """
+        Initialize the decomposer agent
+        
+        Args:
+            chat_manager: The chat manager to use for communication with the LLM
+        """
+        super().__init__(chat_manager)
     
     def understand_and_plan(self, query: str, schema: str) -> Dict[str, str]:
         """
@@ -282,7 +294,7 @@ PLAN:
         
         try:
             print(f"[DecomposerAgent] Sending prompt to LLM ({len(understanding_and_planning_prompt)} chars)")
-            response = self.llm.invoke(understanding_and_planning_prompt)
+            response = self.chat_manager.generate_llm_response(understanding_and_planning_prompt)
             print(f"[DecomposerAgent] Output: {len(response)} chars")
             
             # Extract understanding and plan from response
@@ -344,7 +356,7 @@ YOUR UNDERSTANDING:
         
         try:
             print(f"[DecomposerAgent] Sending understanding prompt to LLM ({len(understanding_prompt)} chars)")
-            understanding = self.llm.invoke(understanding_prompt)
+            understanding = self.chat_manager.generate_llm_response(understanding_prompt)
             print(f"[DecomposerAgent] Understanding Output: {len(understanding)} chars")
             return understanding
         except Exception as e:
@@ -391,7 +403,7 @@ YOUR SQL QUERY PLAN:
         
         try:
             print(f"[DecomposerAgent] Sending planning prompt to LLM ({len(planning_prompt)} chars)")
-            plan = self.llm.invoke(planning_prompt)
+            plan = self.chat_manager.generate_llm_response(planning_prompt)
             print(f"[DecomposerAgent] Planning Output: {len(plan)} chars")
             return plan
         except Exception as e:
@@ -406,13 +418,19 @@ class RefinerAgent(BaseAgent):
     Agent responsible for generating and refining SQL queries.
     
     The Refiner agent focuses on:
-    1. Generating SQL based on the understanding and plan
-    2. Refining SQL when errors occur
-    3. Validating the SQL before execution
+    1. Generating initial SQL queries based on the understanding and plan
+    2. Refining SQL queries if errors are encountered
+    3. Ensuring the final SQL query is valid and accurate
     """
     
-    def __init__(self, model_name, api_key):
-        super().__init__(model_name, api_key)
+    def __init__(self, chat_manager):
+        """
+        Initialize the refiner agent
+        
+        Args:
+            chat_manager: The chat manager to use for communication with the LLM
+        """
+        super().__init__(chat_manager)
         self.max_retries = 3  # Maximum number of retries for rate limiting
     
     def generate_sql(
@@ -441,6 +459,31 @@ class RefinerAgent(BaseAgent):
         print(f"  - Understanding length: {len(understanding)} chars")
         print(f"  - Plan length: {len(plan)} chars")
         
+        # Determine if we're working with SQLite
+        is_sqlite = True  # Default to SQLite as it's safest for the BIRD benchmark
+        if hasattr(self.chat_manager, 'connection'):
+            import sqlite3
+            is_sqlite = isinstance(self.chat_manager.connection, sqlite3.Connection)
+        
+        # Adjust prompt based on database type
+        db_specific_guidance = """
+        For SQLite databases:
+        1. DO NOT use 'information_schema' tables - they don't exist in SQLite
+        2. Use PRAGMA statements to get schema information
+        3. Use single quotes for string literals, not double quotes
+        4. Date functions use strftime(), not EXTRACT
+        5. Remember that SQLite is case-sensitive for table and column names
+        """
+        
+        if not is_sqlite:
+            db_specific_guidance = """
+            For PostgreSQL databases:
+            1. You can use information_schema tables to get metadata
+            2. Use double quotes for identifiers and single quotes for string literals
+            3. Date functions use EXTRACT() and ::date casting
+            4. Remember that PostgreSQL is case-sensitive unless quoted
+            """
+        
         sql_generation_prompt = f"""You are an expert SQL query generator. Generate a valid SQL query based on the user question, your understanding, and the query plan.
 
 USER QUESTION: {query}
@@ -454,6 +497,8 @@ QUERY PLAN:
 RELEVANT DATABASE SCHEMA:
 {schema}
 
+{db_specific_guidance}
+
 EXTREMELY IMPORTANT: CAREFULLY EXAMINE the schema above to identify the EXACT table and column names needed. Do NOT reference columns that don't exist in the schema. Double-check that every column and table name you use actually exists.
 
 Generate a valid, executable SQL query that correctly answers the user's question. Follow these strict guidelines:
@@ -462,7 +507,7 @@ Generate a valid, executable SQL query that correctly answers the user's questio
 3. Handle any necessary filtering, grouping, or aggregation
 4. Double-check column names for spelling and case sensitivity
 5. For tables containing financial data, look for columns named 'amount', 'cost', 'budget', 'spent', or similar
-6. When the question asks for a percentage, use CAST and multiplication by 100 for accurate calculation
+6. Return exactly ONE SQL query - do not repeat the same query multiple times
 
 IMPORTANT: PROVIDE ONLY THE EXECUTABLE SQL WITHOUT ANY MARKDOWN FORMATTING, EXPLANATION, OR TEXT. DO NOT INCLUDE ANY ``` BACKTICKS OR COMMENTS IN YOUR RESPONSE, JUST THE RAW SQL QUERY. Your entire response should be valid SQL that can be executed directly.
 
@@ -473,11 +518,18 @@ YOUR SQL QUERY:
         while retries <= self.max_retries:
             try:
                 print(f"[RefinerAgent] Sending SQL generation prompt to LLM ({len(sql_generation_prompt)} chars)")
-                response = self.llm.invoke(sql_generation_prompt)
+                response = self.chat_manager.generate_llm_response(sql_generation_prompt)
                 print(f"[RefinerAgent] SQL Generation Output: {len(response)} chars")
                 
                 # Extract just the SQL query and clean it
                 sql_query = self._clean_sql_response(response)
+                
+                # Check for SQL repetition and fix it
+                if sql_query:
+                    repeated_statements = self._detect_repeated_statements(sql_query)
+                    if repeated_statements:
+                        # Take only the first statement
+                        sql_query = repeated_statements[0]
                 
                 # If SQL query is empty or obviously not SQL, use a fallback
                 if not sql_query or len(sql_query) < 10 or not self._looks_like_sql(sql_query):
@@ -518,141 +570,76 @@ YOUR SQL QUERY:
         query: str, 
         sql_query: str,
         error_message: str
-    ) -> Dict[str, str]:
+    ) -> str:
         """
-        Simplified version of refine_sql that takes only the essential parameters
+        Refine SQL query based on error messages
         
         Args:
-            query: The user's natural language query
-            sql_query: The original SQL query that failed
-            error_message: The error message from the database
+            query: The original natural language query
+            sql_query: The SQL query to refine
+            error_message: Error message from execution
             
         Returns:
-            Dictionary containing the refined SQL and notes
+            Refined SQL query as a string
         """
+        if not error_message:
+            return sql_query
+        
         print(f"\n[RefinerAgent] Refinement Inputs:")
         print(f"  - Query: {query}")
         print(f"  - Original SQL: {sql_query}")
         print(f"  - Error: {error_message}")
-        
-        # Check if transaction is aborted
-        if "current transaction is aborted" in error_message.lower():
-            print("[RefinerAgent] Transaction is aborted. Suggesting ROLLBACK before retrying.")
-            return {
-                "sql": "ROLLBACK; " + sql_query,
-                "notes": "Added ROLLBACK to reset aborted transaction."
-            }
-        
-        # Handle reserved words in SQL
-        if "syntax error at or near" in error_message.lower():
-            # Check for common reserved words
-            reserved_words = ["order", "user", "group", "table", "select", "where", "from", "join"]
-            for word in reserved_words:
-                if f'"{word}"' not in sql_query and f' {word} ' in sql_query.lower():
-                    # Add quotes around the reserved word
-                    sql_query = sql_query.replace(f" {word} ", f' "{word}" ')
-                    return {
-                        "sql": sql_query,
-                        "notes": f"Added quotes around reserved word: {word}"
-                    }
-        
-        # Check for backticks causing syntax errors
-        if "syntax error at or near" in error_message.lower() and "````" in sql_query:
-            # Remove backticks and any text after them
-            clean_sql = sql_query.split("````")[0].strip()
-            if clean_sql.endswith(';'):
-                return {
-                    "sql": clean_sql,
-                    "notes": "Removed backticks and trailing text causing syntax error."
-                }
-        
-        # Handle column does not exist errors
-        if "column" in error_message.lower() and "does not exist" in error_message.lower():
-            # Simplify the query to avoid non-existent columns
-            if "SELECT" in sql_query.upper() and "FROM" in sql_query.upper():
-                # Extract the table name from the query
-                table_match = re.search(r'FROM\s+([a-zA-Z0-9_]+)', sql_query, re.IGNORECASE)
-                if table_match:
-                    table_name = table_match.group(1)
-                    return {
-                        "sql": f"SELECT * FROM {table_name} LIMIT 5;",
-                        "notes": f"Using a simplified query due to non-existent column error."
-                    }
-        
-        refinement_prompt = f"""You are an expert SQL query debugger. The SQL query below failed with an error. Fix the query to make it work correctly.
 
-USER QUESTION: {query}
-
-ORIGINAL SQL QUERY:
-{sql_query}
-
-ERROR MESSAGE:
-{error_message}
-
-IMPORTANT DEBUGGING INSTRUCTIONS:
-1. If the error is "column X does not exist", make sure you're using ONLY column names that exist in the database schema.
-2. For financial queries, check for columns named 'amount', 'cost', 'spent', 'budget', etc.
-3. For percentage calculations, use CAST and multiplication by 100 for accurate results.
-4. When joining tables, make sure the join conditions use columns that exist in both tables.
-5. Double-check all table names and column references.
-6. Avoid using backticks (`) in PostgreSQL queries.
-7. Reserved words in SQL need to be quoted (e.g., "order", "user", "group", "table").
-
-EXTREMELY IMPORTANT: Provide ONLY the fixed SQL query without any explanation, comments, markdown formatting (no ```), or any other text. Just the raw SQL query and nothing else.
-"""
+        # Create a prompt for SQL refinement
+        refinement_prompt = f"""
+        You are an expert SQL debugger. The following SQL query was generated to answer a question but encountered an error during execution.
         
-        retries = 0
-        while retries <= self.max_retries:
+        Question: {query}
+        Original SQL: {sql_query}
+        Error Message: {error_message}
+        
+        Please fix the SQL query to address the error and ensure it correctly answers the original question.
+        Only return the fixed SQL query without any explanations.
+        """
+        
+        max_retries = self.max_retries
+        retry_count = 0
+        
+        while retry_count < max_retries:
             try:
                 print(f"[RefinerAgent] Sending refinement prompt to LLM ({len(refinement_prompt)} chars)")
-                response = self.llm.invoke(refinement_prompt)
+                response = self.chat_manager.generate_llm_response(refinement_prompt)
                 print(f"[RefinerAgent] Refinement Output: {len(response)} chars")
                 
-                # Extract just the SQL query using our improved method
+                # Extract SQL from the response
                 refined_sql = self._clean_sql_response(response)
                 
-                # Ensure we have a valid SQL query
-                if not refined_sql or len(refined_sql) < 10 or not self._looks_like_sql(refined_sql):
-                    print("[RefinerAgent] Refined SQL doesn't look valid, using original SQL.")
-                    return {
-                        "sql": sql_query,
-                        "notes": "Refinement didn't produce valid SQL. Using original query."
-                    }
+                # Validate the refined SQL
+                if not self._looks_like_sql(refined_sql):
+                    # If it doesn't look like SQL, try to extract it
+                    match = re.search(r'```sql\s*(.*?)\s*```', response, re.DOTALL)
+                    if match:
+                        refined_sql = match.group(1).strip()
                 
-                # Check if refinement made a difference
-                if refined_sql == sql_query:
-                    print("[RefinerAgent] Refinement produced the same SQL.")
-                    return {
-                        "sql": sql_query,
-                        "notes": "Refinement produced the same SQL."
-                    }
+                # If still no valid SQL, return the original
+                if not refined_sql or not self._looks_like_sql(refined_sql):
+                    print(f"Warning: Could not extract valid SQL from refinement response. Using original SQL.")
+                    return sql_query
                 
-                return {
-                    "sql": refined_sql,
-                    "notes": f"SQL refined to fix error: {error_message}"
-                }
+                return refined_sql
             except Exception as e:
-                error_str = str(e).lower()
-                retries += 1
-                
-                # Check if it's a rate limit error
-                if any(phrase in error_str for phrase in ['rate limit', 'too many requests', 'server overloaded', '429', '503', 'timeout']):
-                    wait_time = 2 ** retries  # Exponential backoff: 2, 4, 8 seconds
-                    print(f"[RefinerAgent] Rate limit hit. Waiting {wait_time} seconds before retry {retries}/{self.max_retries}")
-                    time.sleep(wait_time)
+                retry_count += 1
+                print(f"Error in SQL refinement (attempt {retry_count}/{max_retries}): {e}")
+                if retry_count < max_retries:
+                    print(f"Retrying in 2 seconds...")
+                    import time
+                    time.sleep(2)
                 else:
-                    # For other errors, just return the original query
-                    print(f"[RefinerAgent] Error during refinement: {e}")
-                    return {
-                        "sql": sql_query,
-                        "notes": f"Error during refinement: {e}"
-                    }
+                    print(f"Max retries reached. Returning original SQL.")
+                    return sql_query
         
-        # If we've exhausted retries or encountered a non-rate-limit error
-        return {
-            "sql": sql_query,
-            "notes": "Failed to refine SQL after multiple attempts."
-        }
+        # If we get here, return the original SQL
+        return sql_query
     
     def _extract_table_name(self, schema: str) -> str:
         """Extract the first table name from the schema"""
@@ -710,75 +697,76 @@ EXTREMELY IMPORTANT: Provide ONLY the fixed SQL query without any explanation, c
     
     def _clean_sql_response(self, sql: str) -> str:
         """
-        Clean up the SQL response to extract just the SQL query.
-        This enhanced version is designed to handle responses with explanations, 
-        markdown formatting, and non-SQL text.
+        Clean and extract SQL query from the LLM response
+        
+        Args:
+            sql: Raw response from LLM that may contain SQL
+            
+        Returns:
+            Cleaned SQL query
         """
         if not sql:
             return ""
             
-        # Strip the response
-        sql = sql.strip()
+        # Remove markdown code blocks if present
+        if "```" in sql:
+            # Try to extract from markdown code blocks first
+            matches = re.findall(r"```(?:sql|postgresql|)?\s*([\s\S]*?)```", sql, re.IGNORECASE)
+            if matches:
+                # Use the first code block that looks like SQL
+                for match in matches:
+                    cleaned = match.strip()
+                    if self._looks_like_sql(cleaned):
+                        return cleaned
         
-        # First, check for markdown code blocks and extract content
-        markdown_match = re.search(r'```(?:sql)?\s*(.*?)\s*```', sql, re.DOTALL)
-        if markdown_match:
-            sql = markdown_match.group(1).strip()
+        # If no code blocks found, try to extract SQL using keyword patterns
+        lines = sql.split('\n')
+        sql_lines = []
+        in_sql = False
         
-        # Check for backticks without markdown format and remove them and anything after
-        if '````' in sql:
-            sql = sql.split('````')[0].strip()
+        for line in lines:
+            line = line.strip()
+            
+            # Skip empty lines and comment lines
+            if not line or line.startswith('--') or line.startswith('#') or line.startswith('/*'):
+                continue
+                
+            # Check if line contains SQL keywords to start capturing
+            if re.match(r'^(SELECT|WITH|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER)\b', line, re.IGNORECASE):
+                in_sql = True
+                sql_lines.append(line)
+            # If we're already capturing SQL, continue until we hit a line that seems to end it
+            elif in_sql:
+                # Stop capturing if we hit a line that looks like explanation text
+                if re.match(r'^(In this query|This query|Here|The|Note|This|I|As you can see)', line):
+                    break
+                sql_lines.append(line)
         
-        # Handle trailing backticks explicitly (````)
-        sql = re.sub(r'\s*```+\s*;?', ';', sql)
-        # Handle trailing backticks with no semicolon
-        sql = re.sub(r'\s*```+\s*$', '', sql)
+        # If we found SQL lines, join them
+        if sql_lines:
+            cleaned_sql = ' '.join(sql_lines)
+            
+            # Make sure the query ends with a semicolon
+            if not cleaned_sql.rstrip().endswith(';'):
+                cleaned_sql += ';'
+                
+            return cleaned_sql
         
-        # Try to extract a SQL query - looking for SELECT, WITH, etc.
-        sql_match = re.search(r'(?:SELECT|WITH|CREATE|INSERT|UPDATE|DELETE).*?;', sql, re.DOTALL | re.IGNORECASE)
+        # If all else fails, try a more aggressive approach to find SQL-like content
+        sql_match = re.search(r'(SELECT\s+.+?;)', sql, re.DOTALL | re.IGNORECASE)
         if sql_match:
-            sql = sql_match.group(0).strip()
+            return sql_match.group(1).strip()
+            
+        # If we still can't find SQL, return the original text cleaned up
+        # but only if it looks like it might be SQL
+        cleaned = re.sub(r'[`""]', '"', sql)  # Normalize quotes
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()  # Normalize whitespace
         
-        # If we don't have a semicolon, try to get just the SQL part without the semicolon
-        if not ';' in sql:
-            sql_match = re.search(r'(?:SELECT|WITH|CREATE|INSERT|UPDATE|DELETE).*', sql, re.DOTALL | re.IGNORECASE)
-            if sql_match:
-                sql = sql_match.group(0).strip()
-                # Add semicolon if missing
-                if not sql.endswith(';'):
-                    sql = sql + ';'
-        
-        # Remove any non-SQL noise before the query
-        prefixes = ['sql', 'query', 'fixed query', 'corrected query', 'here', 'the', 'is', 'answer']
-        for prefix in prefixes:
-            if sql.lower().startswith(prefix):
-                # Find the actual SQL start
-                for keyword in ['SELECT', 'WITH', 'CREATE', 'INSERT', 'UPDATE', 'DELETE']:
-                    if keyword in sql.upper():
-                        start_idx = sql.upper().find(keyword)
-                        if start_idx > 0:
-                            sql = sql[start_idx:].strip()
-                            break
-        
-        # Clean up common SQL issues
-        sql = self._clean_sql(sql)
-        
-        # Special handling for specific trailing characters that cause syntax errors
-        sql = re.sub(r'```+\s*$', '', sql)  # Remove any trailing backticks
-        sql = re.sub(r'^\s*```+\s*', '', sql)  # Remove any leading backticks
-        
-        # Final check - if the result is very long (>500 chars) and contains words like "I", "explanation", 
-        # or other clearly non-SQL content, it's probably not just SQL
-        if len(sql) > 500 and any(word in sql.lower() for word in ['i ', 'explanation', 'understand', 'however', 'note:']):
-            # Try one more extraction of just the SQL part
-            for keyword in ['SELECT', 'WITH', 'CREATE', 'INSERT', 'UPDATE', 'DELETE']:
-                if keyword in sql.upper():
-                    pattern = f'{keyword}.*?;'
-                    sql_part = re.search(pattern, sql, re.DOTALL | re.IGNORECASE)
-                    if sql_part:
-                        return sql_part.group(0).strip()
-        
-        return sql
+        if self._looks_like_sql(cleaned):
+            return cleaned
+            
+        # Nothing worked, return empty string
+        return ""
     
     def _looks_like_sql(self, text: str) -> bool:
         """Check if a string looks like a valid SQL query"""
@@ -803,3 +791,223 @@ EXTREMELY IMPORTANT: Provide ONLY the fixed SQL query without any explanation, c
         
         # A real SQL query should have multiple keywords and appropriate length
         return keyword_count >= 2 and len(text) > 20 and len(text) < 1000 
+
+    def _detect_repeated_statements(self, sql: str) -> List[str]:
+        """
+        Detect and split repeated SQL statements
+        
+        Args:
+            sql: SQL query that might contain repeated statements
+            
+        Returns:
+            List of unique SQL statements
+        """
+        # Check if there are multiple statements (separated by semicolons)
+        if sql.count(';') > 1:
+            # Split by semicolon and filter out empty statements
+            statements = [stmt.strip() + ';' for stmt in sql.split(';') if stmt.strip()]
+            
+            # Deduplicate statements
+            unique_statements = []
+            for stmt in statements:
+                normalized = re.sub(r'\s+', ' ', stmt.lower()).strip()
+                if not any(re.sub(r'\s+', ' ', existing.lower()).strip() == normalized for existing in unique_statements):
+                    unique_statements.append(stmt)
+            
+            return unique_statements
+        
+        # No repetition detected
+        return [sql]
+
+
+class QuestionAgent:
+    """Agent for understanding user questions and extracting key components."""
+    
+    def __init__(self, chat_manager):
+        """
+        Initialize the QuestionAgent.
+        
+        Args:
+            chat_manager: The chat manager to use for communication with the LLM
+        """
+        self.chat_manager = chat_manager
+    
+    def process_question(self, query: str, schema_name: str) -> Dict[str, Any]:
+        """
+        Process a user question to understand its intent and identify key components.
+        
+        Args:
+            query: The user's natural language query
+            schema_name: The database schema context
+            
+        Returns:
+            Dict with understanding of the question
+        """
+        # Create a prompt for understanding the question
+        prompt = f"""
+        I need to understand this database question: "{query}"
+        
+        The question is about the database: {schema_name}
+        
+        Please analyze the question and identify:
+        1. The main intent (e.g., filtering, aggregation, comparison)
+        2. The entities or tables that are likely involved
+        3. Any specific conditions or filters
+        4. Any time-related constraints
+        5. The type of information requested (count, list, calculation, etc.)
+        
+        Return your analysis as a JSON object with these components.
+        """
+        
+        try:
+            # Get response from the LLM
+            response = self.chat_manager.generate_llm_response(prompt)
+            
+            # Try to parse the response as JSON
+            try:
+                import json
+                result = json.loads(response)
+                return result
+            except:
+                # If parsing fails, return as text
+                return {"understanding": response}
+        except Exception as e:
+            print(f"Error processing question: {str(e)}")
+            return {"understanding": "Failed to process question", "error": str(e)}
+
+
+class SQLGenerator:
+    """Agent for generating SQL queries based on user questions."""
+    
+    def __init__(self, chat_manager):
+        """
+        Initialize the SQLGenerator.
+        
+        Args:
+            chat_manager: The chat manager to use for communication with the LLM
+        """
+        self.chat_manager = chat_manager
+    
+    def generate_sql(self, query: str, schema_name: str) -> str:
+        """
+        Generate SQL from a natural language query.
+        
+        Args:
+            query: The user's natural language query
+            schema_name: The database schema context
+            
+        Returns:
+            SQL query string
+        """
+        # Get the schema information
+        schema_info = self._get_schema_info(schema_name)
+        
+        # Create a prompt for generating SQL
+        prompt = f"""
+        You are an expert SQL query generator. Your task is to translate a natural language question into a valid SQL query.
+        
+        Question: "{query}"
+        
+        Database context: {schema_name}
+        
+        Database schema information:
+        {schema_info}
+        
+        Generate a single SQL query that answers this question. The SQL must be compatible with PostgreSQL.
+        Follow these rules:
+        1. Do not use any fictional tables or columns not mentioned in the schema
+        2. ONLY return the SQL query without any explanations, comments, or markdown formatting
+        3. Ensure your query is complete with necessary joins, conditions, and ordering
+        4. Use explicit JOIN syntax rather than comma-separated tables
+        5. Make sure the query ends with a semicolon
+        
+        SQL:
+        """
+        
+        try:
+            # Get response from the LLM
+            sql = self.chat_manager.generate_llm_response(prompt)
+            return sql
+        except Exception as e:
+            print(f"Error generating SQL: {str(e)}")
+            return ""
+    
+    def _get_schema_info(self, schema_name: str) -> str:
+        """
+        Get schema information for the specified database.
+        
+        Args:
+            schema_name: The database schema name
+            
+        Returns:
+            Schema information as a string
+        """
+        try:
+            # First try to get schema from database
+            schema_query = f"""
+            SELECT table_name, column_name, data_type, is_nullable
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+            ORDER BY table_name, ordinal_position;
+            """
+            
+            result = self.chat_manager.execute_sql_query(schema_query)
+            
+            if result.get('success', False) and 'rows' in result and 'columns' in result:
+                # Format the schema information
+                schema_info = []
+                current_table = None
+                table_columns = []
+                
+                for row in result['rows']:
+                    table_name = row[0]
+                    column_name = row[1]
+                    data_type = row[2]
+                    is_nullable = row[3]
+                    
+                    if current_table != table_name:
+                        if current_table:
+                            schema_info.append(f"Table: {current_table}")
+                            schema_info.append("Columns:")
+                            for col in table_columns:
+                                schema_info.append(f"  - {col}")
+                            schema_info.append("")
+                        
+                        current_table = table_name
+                        table_columns = []
+                    
+                    nullable_str = "NULL" if is_nullable == "YES" else "NOT NULL"
+                    table_columns.append(f"{column_name} ({data_type}, {nullable_str})")
+                
+                # Add the last table
+                if current_table:
+                    schema_info.append(f"Table: {current_table}")
+                    schema_info.append("Columns:")
+                    for col in table_columns:
+                        schema_info.append(f"  - {col}")
+                
+                return "\n".join(schema_info)
+            
+            # Fallback: Get table names at minimum
+            tables_query = f"""
+            SELECT table_name FROM information_schema.tables 
+            WHERE table_schema = 'public'
+            """
+            
+            tables_result = self.chat_manager.execute_sql_query(tables_query)
+            
+            if tables_result.get('success', False) and 'rows' in tables_result:
+                table_names = [row[0] for row in tables_result['rows']]
+                return f"Tables in database: {', '.join(table_names)}"
+            
+            # Final fallback based on database name
+            if schema_name == 'student_club':
+                return "Tables: member (member_id, first_name, last_name, position), event (event_id, event_name, type, date), attendance (attendance_id, link_to_member, link_to_event), income (income_id, amount, date_received, link_to_member)"
+            elif schema_name == 'formula_1':
+                return "Tables: drivers (driverId, forename, surname, nationality, dob), races (raceId, name, year, date), constructors (constructorId, name, nationality), results (resultId, raceId, driverId, constructorId, position, points)"
+            else:
+                return f"Database: {schema_name} (schema information not available)"
+        
+        except Exception as e:
+            print(f"Error retrieving schema info: {str(e)}")
+            return f"Database: {schema_name} (schema information not available due to error: {str(e)})" 

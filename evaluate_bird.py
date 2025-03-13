@@ -21,6 +21,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from typing import Dict, List, Any, Optional, Tuple
+import numpy as np
 
 from mac_sql import MACSQL
 from core.config import DB_CONFIG
@@ -92,8 +93,9 @@ def evaluate_mac_sql(benchmark_data: List[Dict[str, Any]]) -> Dict[str, Any]:
     results = {
         "model": mac_sql.model_name,
         "total": len(benchmark_data),
-        "correct": 0,
-        "errors": 0,
+        "execution_success": 0,  # Queries that execute without errors
+        "semantic_correct": 0,   # Queries that return correct results
+        "execution_errors": 0,
         "execution_times": [],
         "detailed_results": []
     }
@@ -121,14 +123,69 @@ def evaluate_mac_sql(benchmark_data: List[Dict[str, Any]]) -> Dict[str, Any]:
             # database context we're evaluating for query understanding
             sql, results_df = mac_sql.process_query(question, db_context=db_id)
             execution_time = time.time() - start_time
-            success = True
+            
+            # Mark as execution success
+            execution_success = True
             error_msg = None
+            
+            # Store the generated results
+            generated_results = {
+                'success': True,
+                'sql': sql,
+                'results': results_df
+            }
         except Exception as e:
             execution_time = time.time() - start_time
-            success = False
+            execution_success = False
             error_msg = str(e)
             sql = None
             results_df = None
+            generated_results = {
+                'success': False,
+                'sql': sql,
+                'error': error_msg
+            }
+        
+        # Execute gold SQL to get ground truth results
+        gold_results = None
+        if gold_sql:
+            try:
+                # Use the chat manager to execute the gold SQL
+                gold_query_result = mac_sql.chat_manager.execute_sql_query(gold_sql)
+                if gold_query_result.get('success', False):
+                    # Convert to DataFrame for comparison
+                    if 'rows' in gold_query_result and 'columns' in gold_query_result:
+                        gold_df = pd.DataFrame(gold_query_result['rows'], columns=gold_query_result['columns'])
+                        gold_results = {
+                            'success': True,
+                            'sql': gold_sql,
+                            'results': gold_df
+                        }
+                    else:
+                        gold_results = {
+                            'success': True,
+                            'sql': gold_sql,
+                            'results': pd.DataFrame()
+                        }
+                else:
+                    gold_results = {
+                        'success': False,
+                        'sql': gold_sql,
+                        'error': gold_query_result.get('error', 'Unknown error executing gold SQL')
+                    }
+            except Exception as e:
+                gold_results = {
+                    'success': False,
+                    'sql': gold_sql,
+                    'error': str(e)
+                }
+        
+        # Determine if results match (semantic correctness)
+        semantic_correct = False
+        comparison_notes = ""
+        
+        if execution_success and gold_results and gold_results['success']:
+            semantic_correct, comparison_notes = compare_query_results(results_df, gold_results['results'])
         
         # Record detailed results
         detail = {
@@ -137,7 +194,9 @@ def evaluate_mac_sql(benchmark_data: List[Dict[str, Any]]) -> Dict[str, Any]:
             "question": question,
             "gold_sql": gold_sql,
             "generated_sql": sql,
-            "success": success,
+            "execution_success": execution_success,
+            "semantic_correct": semantic_correct,
+            "comparison_notes": comparison_notes,
             "error_message": error_msg,
             "execution_time": execution_time,
             "difficulty": difficulty,
@@ -147,18 +206,28 @@ def evaluate_mac_sql(benchmark_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         results["detailed_results"].append(detail)
         results["execution_times"].append(execution_time)
         
-        if success:
-            results["correct"] += 1
+        if execution_success:
+            results["execution_success"] += 1
             print(f"Generated SQL: {sql}")
+            print(f"Execution Success: True")
         else:
-            results["errors"] += 1
+            results["execution_errors"] += 1
             print(f"Query execution failed: {error_msg}")
+            print(f"Execution Success: False")
         
-        print(f"Success: {success}")
+        if semantic_correct:
+            results["semantic_correct"] += 1
+            print(f"Results match gold standard: True")
+        else:
+            print(f"Results match gold standard: False")
+            if comparison_notes:
+                print(f"Comparison notes: {comparison_notes}")
+        
         print(f"Execution time: {execution_time:.2f}s")
     
-    # Calculate accuracy
-    results["accuracy"] = results["correct"] / results["total"] if results["total"] > 0 else 0
+    # Calculate accuracies
+    results["execution_accuracy"] = results["execution_success"] / results["total"] if results["total"] > 0 else 0
+    results["semantic_accuracy"] = results["semantic_correct"] / results["total"] if results["total"] > 0 else 0
     
     # Calculate results by database
     results["results_by_db"] = {}
@@ -167,16 +236,21 @@ def evaluate_mac_sql(benchmark_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         if db_id not in results["results_by_db"]:
             results["results_by_db"][db_id] = {
                 "total": 0,
-                "correct": 0,
-                "accuracy": 0
+                "execution_success": 0,
+                "semantic_correct": 0,
+                "execution_accuracy": 0,
+                "semantic_accuracy": 0
             }
         results["results_by_db"][db_id]["total"] += 1
-        if detail["success"]:
-            results["results_by_db"][db_id]["correct"] += 1
+        if detail["execution_success"]:
+            results["results_by_db"][db_id]["execution_success"] += 1
+        if detail["semantic_correct"]:
+            results["results_by_db"][db_id]["semantic_correct"] += 1
     
     # Calculate accuracy for each database
     for db_id, db_result in results["results_by_db"].items():
-        db_result["accuracy"] = db_result["correct"] / db_result["total"] if db_result["total"] > 0 else 0
+        db_result["execution_accuracy"] = db_result["execution_success"] / db_result["total"] if db_result["total"] > 0 else 0
+        db_result["semantic_accuracy"] = db_result["semantic_correct"] / db_result["total"] if db_result["total"] > 0 else 0
     
     # Calculate results by difficulty
     results["results_by_difficulty"] = {}
@@ -185,16 +259,21 @@ def evaluate_mac_sql(benchmark_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         if difficulty not in results["results_by_difficulty"]:
             results["results_by_difficulty"][difficulty] = {
                 "total": 0,
-                "correct": 0,
-                "accuracy": 0
+                "execution_success": 0,
+                "semantic_correct": 0,
+                "execution_accuracy": 0,
+                "semantic_accuracy": 0
             }
         results["results_by_difficulty"][difficulty]["total"] += 1
-        if detail["success"]:
-            results["results_by_difficulty"][difficulty]["correct"] += 1
+        if detail["execution_success"]:
+            results["results_by_difficulty"][difficulty]["execution_success"] += 1
+        if detail["semantic_correct"]:
+            results["results_by_difficulty"][difficulty]["semantic_correct"] += 1
     
     # Calculate accuracy for each difficulty
     for difficulty, diff_result in results["results_by_difficulty"].items():
-        diff_result["accuracy"] = diff_result["correct"] / diff_result["total"] if diff_result["total"] > 0 else 0
+        diff_result["execution_accuracy"] = diff_result["execution_success"] / diff_result["total"] if diff_result["total"] > 0 else 0
+        diff_result["semantic_accuracy"] = diff_result["semantic_correct"] / diff_result["total"] if diff_result["total"] > 0 else 0
     
     # Calculate results by hardness
     results["results_by_hardness"] = {}
@@ -203,18 +282,108 @@ def evaluate_mac_sql(benchmark_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         if hardness not in results["results_by_hardness"]:
             results["results_by_hardness"][hardness] = {
                 "total": 0,
-                "correct": 0,
-                "accuracy": 0
+                "execution_success": 0,
+                "semantic_correct": 0,
+                "execution_accuracy": 0,
+                "semantic_accuracy": 0
             }
         results["results_by_hardness"][hardness]["total"] += 1
-        if detail["success"]:
-            results["results_by_hardness"][hardness]["correct"] += 1
+        if detail["execution_success"]:
+            results["results_by_hardness"][hardness]["execution_success"] += 1
+        if detail["semantic_correct"]:
+            results["results_by_hardness"][hardness]["semantic_correct"] += 1
     
     # Calculate accuracy for each hardness
     for hardness, hard_result in results["results_by_hardness"].items():
-        hard_result["accuracy"] = hard_result["correct"] / hard_result["total"] if hard_result["total"] > 0 else 0
+        hard_result["execution_accuracy"] = hard_result["execution_success"] / hard_result["total"] if hard_result["total"] > 0 else 0
+        hard_result["semantic_accuracy"] = hard_result["semantic_correct"] / hard_result["total"] if hard_result["total"] > 0 else 0
     
     return results
+
+def compare_query_results(generated_df: pd.DataFrame, gold_df: pd.DataFrame) -> Tuple[bool, str]:
+    """
+    Compare results from generated SQL and gold SQL to determine if they match
+    
+    Args:
+        generated_df: DataFrame with results from generated SQL
+        gold_df: DataFrame with results from gold SQL
+        
+    Returns:
+        Tuple of (match_result, comparison_notes)
+    """
+    if generated_df is None or gold_df is None:
+        return False, "One or both result sets are None"
+    
+    # Check if both are empty (this could be a valid match)
+    if len(generated_df) == 0 and len(gold_df) == 0:
+        return True, "Both result sets are empty"
+    
+    # Check row count match
+    if len(generated_df) != len(gold_df):
+        return False, f"Row count mismatch: generated={len(generated_df)}, gold={len(gold_df)}"
+    
+    # Handle single value result (common for COUNT, AVG, etc.)
+    if len(generated_df) == 1 and len(gold_df) == 1 and len(generated_df.columns) == 1 and len(gold_df.columns) == 1:
+        gen_value = generated_df.iloc[0, 0]
+        gold_value = gold_df.iloc[0, 0]
+        
+        # Try numeric comparison with tolerance
+        try:
+            gen_num = float(gen_value) if gen_value is not None else None
+            gold_num = float(gold_value) if gold_value is not None else None
+            
+            if gen_num is not None and gold_num is not None:
+                # Use relative tolerance for large numbers
+                if abs(gold_num) > 1.0:
+                    relative_diff = abs(gen_num - gold_num) / abs(gold_num)
+                    if relative_diff < 0.01:  # 1% tolerance
+                        return True, f"Single numeric values match within tolerance: {gen_num} ≈ {gold_num}"
+                # Use absolute tolerance for small numbers
+                elif abs(gen_num - gold_num) < 0.001:
+                    return True, f"Single numeric values match within tolerance: {gen_num} ≈ {gold_num}"
+                else:
+                    return False, f"Single numeric values don't match: {gen_num} != {gold_num}"
+        except (ValueError, TypeError):
+            # Non-numeric comparison
+            if gen_value == gold_value:
+                return True, f"Single values match exactly: {gen_value}"
+            else:
+                return False, f"Single values don't match: {gen_value} != {gold_value}"
+    
+    # Multi-row results: first try direct comparison
+    if generated_df.equals(gold_df):
+        return True, "DataFrames match exactly"
+    
+    # Check if columns match (may be in different order)
+    gen_cols = set(generated_df.columns)
+    gold_cols = set(gold_df.columns)
+    
+    if gen_cols != gold_cols:
+        return False, f"Column names don't match: generated={gen_cols}, gold={gold_cols}"
+    
+    # For single column results, try sorting and comparing
+    if len(gen_cols) == 1:
+        gen_sorted = generated_df.sort_values(by=generated_df.columns[0]).reset_index(drop=True)
+        gold_sorted = gold_df.sort_values(by=gold_df.columns[0]).reset_index(drop=True)
+        
+        if gen_sorted.equals(gold_sorted):
+            return True, "Single column results match after sorting"
+    
+    # For multi-column results, try more sophisticated comparison
+    # This is complex and may need to be customized based on the specific use case
+    
+    # As a fallback, check if sets of tuples match (ignoring order)
+    try:
+        gen_tuples = set(map(tuple, generated_df.values))
+        gold_tuples = set(map(tuple, gold_df.values))
+        
+        if gen_tuples == gold_tuples:
+            return True, "Results match as sets (ignoring row order)"
+        else:
+            return False, "Results don't match as sets"
+    except:
+        # If tuple conversion fails (e.g., due to unhashable types)
+        return False, "Unable to compare results as sets"
 
 def visualize_results(results: Dict[str, Any]):
     """Visualize evaluation results"""
@@ -223,57 +392,72 @@ def visualize_results(results: Dict[str, Any]):
     
     # Plot 1: Accuracy by database
     db_names = list(results["results_by_db"].keys())
-    db_accuracy = [results["results_by_db"][db]["accuracy"] * 100 for db in db_names]
-    db_correct = [results["results_by_db"][db]["correct"] for db in db_names]
-    db_total = [results["results_by_db"][db]["total"] for db in db_names]
+    db_exec_accuracy = [results["results_by_db"][db]["execution_accuracy"] * 100 for db in db_names]
+    db_semantic_accuracy = [results["results_by_db"][db]["semantic_accuracy"] * 100 for db in db_names]
     
-    axes[0, 0].bar(db_names, db_accuracy)
+    x = np.arange(len(db_names))
+    width = 0.35
+    
+    axes[0, 0].bar(x - width/2, db_exec_accuracy, width, label='Execution')
+    axes[0, 0].bar(x + width/2, db_semantic_accuracy, width, label='Semantic')
     axes[0, 0].set_title("Accuracy by Database")
     axes[0, 0].set_xlabel("Database")
     axes[0, 0].set_ylabel("Accuracy (%)")
+    axes[0, 0].set_xticks(x)
+    axes[0, 0].set_xticklabels(db_names, rotation=45, ha='right')
     axes[0, 0].set_ylim(0, 100)
-    for i, db in enumerate(db_names):
-        axes[0, 0].text(i, db_accuracy[i] + 2, f"{db_correct[i]}/{db_total[i]}", ha="center")
+    axes[0, 0].legend()
     axes[0, 0].grid(axis='y', linestyle='--', alpha=0.7)
     
     # Plot 2: Accuracy by difficulty
     if "results_by_difficulty" in results:
         diff_names = list(results["results_by_difficulty"].keys())
-        diff_accuracy = [results["results_by_difficulty"][diff]["accuracy"] * 100 for diff in diff_names]
-        diff_correct = [results["results_by_difficulty"][diff]["correct"] for diff in diff_names]
-        diff_total = [results["results_by_difficulty"][diff]["total"] for diff in diff_names]
+        diff_exec_accuracy = [results["results_by_difficulty"][diff]["execution_accuracy"] * 100 for diff in diff_names]
+        diff_semantic_accuracy = [results["results_by_difficulty"][diff]["semantic_accuracy"] * 100 for diff in diff_names]
         
-        axes[0, 1].bar(diff_names, diff_accuracy)
-        axes[0, 1].set_title("Accuracy by Difficulty")
-        axes[0, 1].set_xlabel("Difficulty")
+        x = np.arange(len(diff_names))
+        
+        axes[0, 1].bar(x - width/2, diff_exec_accuracy, width, label='Execution')
+        axes[0, 1].bar(x + width/2, diff_semantic_accuracy, width, label='Semantic')
+        axes[0, 1].set_title("Accuracy by Complexity")
+        axes[0, 1].set_xlabel("Complexity")
         axes[0, 1].set_ylabel("Accuracy (%)")
+        axes[0, 1].set_xticks(x)
+        axes[0, 1].set_xticklabels(diff_names)
         axes[0, 1].set_ylim(0, 100)
-        for i, diff in enumerate(diff_names):
-            axes[0, 1].text(i, diff_accuracy[i] + 2, f"{diff_correct[i]}/{diff_total[i]}", ha="center")
+        axes[0, 1].legend()
         axes[0, 1].grid(axis='y', linestyle='--', alpha=0.7)
     
     # Plot 3: Accuracy by hardness
     if "results_by_hardness" in results:
         hard_names = list(results["results_by_hardness"].keys())
-        hard_accuracy = [results["results_by_hardness"][hard]["accuracy"] * 100 for hard in hard_names]
-        hard_correct = [results["results_by_hardness"][hard]["correct"] for hard in hard_names]
-        hard_total = [results["results_by_hardness"][hard]["total"] for hard in hard_names]
+        hard_exec_accuracy = [results["results_by_hardness"][hard]["execution_accuracy"] * 100 for hard in hard_names]
+        hard_semantic_accuracy = [results["results_by_hardness"][hard]["semantic_accuracy"] * 100 for hard in hard_names]
         
-        axes[1, 0].bar(hard_names, hard_accuracy)
+        x = np.arange(len(hard_names))
+        
+        axes[1, 0].bar(x - width/2, hard_exec_accuracy, width, label='Execution')
+        axes[1, 0].bar(x + width/2, hard_semantic_accuracy, width, label='Semantic')
         axes[1, 0].set_title("Accuracy by Hardness")
         axes[1, 0].set_xlabel("Hardness")
         axes[1, 0].set_ylabel("Accuracy (%)")
+        axes[1, 0].set_xticks(x)
+        axes[1, 0].set_xticklabels(hard_names)
         axes[1, 0].set_ylim(0, 100)
-        for i, hard in enumerate(hard_names):
-            axes[1, 0].text(i, hard_accuracy[i] + 2, f"{hard_correct[i]}/{hard_total[i]}", ha="center")
+        axes[1, 0].legend()
         axes[1, 0].grid(axis='y', linestyle='--', alpha=0.7)
     
-    # Plot 4: Execution times
-    execution_times = results["execution_times"]
-    axes[1, 1].hist(execution_times, bins=10)
-    axes[1, 1].set_title("Execution Times")
-    axes[1, 1].set_xlabel("Time (s)")
-    axes[1, 1].set_ylabel("Count")
+    # Plot 4: Overall comparison
+    labels = ['Execution', 'Semantic']
+    overall_accuracy = [results["execution_accuracy"] * 100, results["semantic_accuracy"] * 100]
+    
+    axes[1, 1].bar(labels, overall_accuracy)
+    axes[1, 1].set_title("Overall Accuracy")
+    axes[1, 1].set_xlabel("Metric")
+    axes[1, 1].set_ylabel("Accuracy (%)")
+    axes[1, 1].set_ylim(0, 100)
+    for i, v in enumerate(overall_accuracy):
+        axes[1, 1].text(i, v + 2, f"{v:.1f}%", ha='center')
     axes[1, 1].grid(axis='y', linestyle='--', alpha=0.7)
     
     plt.tight_layout()
@@ -289,22 +473,25 @@ def print_results_summary(results: Dict[str, Any]):
     """Print a summary of the evaluation results"""
     print("\n===== BIRD EVALUATION SUMMARY =====")
     print(f"Model: {results['model']}")
-    print(f"Execution Accuracy: {results['accuracy'] * 100:.2f}%")
-    print(f"Total correct: {results['correct']} / {results['total']}")
+    print(f"Execution Accuracy: {results['execution_accuracy'] * 100:.2f}%")
+    print(f"Semantic Accuracy: {results['semantic_accuracy'] * 100:.2f}%")
+    print(f"Total queries: {results['total']}")
+    print(f"Execution successes: {results['execution_success']} / {results['total']}")
+    print(f"Semantically correct: {results['semantic_correct']} / {results['total']}")
     
     print("\nResults by Database:")
     for db, db_result in results["results_by_db"].items():
-        print(f"  - {db}: {db_result['accuracy'] * 100:.2f}% ({db_result['correct']}/{db_result['total']})")
+        print(f"  - {db}: Exec={db_result['execution_accuracy'] * 100:.2f}%, Semantic={db_result['semantic_accuracy'] * 100:.2f}% ({db_result['semantic_correct']}/{db_result['total']})")
     
     if "results_by_difficulty" in results:
         print("\nResults by Complexity:")
         for diff, diff_result in results["results_by_difficulty"].items():
-            print(f"  - {diff}: {diff_result['accuracy'] * 100:.2f}% ({diff_result['correct']}/{diff_result['total']})")
+            print(f"  - {diff}: Exec={diff_result['execution_accuracy'] * 100:.2f}%, Semantic={diff_result['semantic_accuracy'] * 100:.2f}% ({diff_result['semantic_correct']}/{diff_result['total']})")
     
     if "results_by_hardness" in results:
         print("\nResults by Difficulty:")
         for hard, hard_result in results["results_by_hardness"].items():
-            print(f"  - {hard}: {hard_result['accuracy'] * 100:.2f}% ({hard_result['correct']}/{hard_result['total']})")
+            print(f"  - {hard}: Exec={hard_result['execution_accuracy'] * 100:.2f}%, Semantic={hard_result['semantic_accuracy'] * 100:.2f}% ({hard_result['semantic_correct']}/{hard_result['total']})")
 
 def main():
     """Main entry point"""

@@ -1,521 +1,55 @@
 {
   "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-  "total": 33,
-  "correct": 23,
-  "errors": 10,
+  "total": 1,
+  "execution_success": 1,
+  "semantic_correct": 0,
+  "execution_errors": 0,
   "execution_times": [
-    46.068986654281616,
-    19.895613193511963,
-    24.97916579246521,
-    27.183512926101685,
-    13.64678144454956,
-    24.124936819076538,
-    22.7417893409729,
-    22.265072345733643,
-    26.825973510742188,
-    7.661559104919434,
-    27.91416883468628,
-    20.105162143707275,
-    19.189799547195435,
-    18.76614212989807,
-    17.01287841796875,
-    25.41737174987793,
-    12.400353193283081,
-    25.21760392189026,
-    19.697148323059082,
-    37.037713289260864,
-    20.32670521736145,
-    12.42830514907837,
-    13.876030206680298,
-    16.987815618515015,
-    12.759500503540039,
-    16.731618881225586,
-    15.344239950180054,
-    30.63092803955078,
-    37.49206852912903,
-    18.960710763931274,
-    32.83129692077637,
-    18.835337162017822,
-    25.492724418640137
+    22.440818548202515
   ],
   "detailed_results": [
     {
-      "db_id": "debit_card_specializing",
-      "question_id": 1501,
-      "question": "Please list the countries of the gas stations with transactions taken place in June, 2013.",
-      "gold_sql": "SELECT DISTINCT T2.Country FROM transactions_1k AS T1 INNER JOIN gasstations AS T2 ON T1.GasStationID = T2.GasStationID INNER JOIN yearmonth AS T3 ON T1.CustomerID = T3.CustomerID WHERE T3.Date = '201306'",
-      "generated_sql": null,
-      "success": false,
-      "error_message": "Query execution failed: relation \"gas_stations\" does not exist\nLINE 1: SELECT DISTINCT c.country_name FROM gas_stations gs INNER JO...\n                                            ^\n",
-      "execution_time": 46.068986654281616,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "debit_card_specializing",
-      "question_id": 1533,
-      "question": "For all the people who paid more than 29.00 per unit of product id No.5. Give their consumption status in the August of 2012.",
-      "gold_sql": "SELECT T2.Consumption FROM transactions_1k AS T1 INNER JOIN yearmonth AS T2 ON T1.CustomerID = T2.CustomerID WHERE T1.Price / NULLIF(T1.Amount, 0) > 29.00 AND T1.ProductID = 5 AND T2.Date = '201208'",
-      "generated_sql": "SELECT * FROM atom WHERE element = 'cl' AND molecule_id = 'TR000';",
-      "success": true,
-      "error_message": null,
-      "execution_time": 19.895613193511963,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "debit_card_specializing",
-      "question_id": 1473,
-      "question": "What was the average monthly consumption of customers in SME for the year 2013?",
-      "gold_sql": "SELECT AVG(T2.Consumption) / NULLIF(12, 0) FROM customers AS T1 INNER JOIN yearmonth AS T2 ON T1.CustomerID = T2.CustomerID WHERE SUBSTR(T2.Date, 1, 4) = '2013' AND T1.Segment = 'SME'",
-      "generated_sql": null,
-      "success": false,
-      "error_message": "Query execution failed: relation \"o\" does not exist\nLINE 1: SELECT * FROM o LIMIT 5;\n                      ^\n",
-      "execution_time": 24.97916579246521,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
       "db_id": "student_club",
-      "question_id": 1426,
-      "question": "List the last name of members with a major in environmental engineering and include its department and college name.",
-      "gold_sql": "SELECT T2.last_name, T1.department, T1.college FROM major AS T1 INNER JOIN member AS T2 ON T1.major_id = T2.link_to_major WHERE T2.position = 'Member' AND T1.major_name = 'Environmental Engineering'",
-      "generated_sql": "SELECT * FROM member LIMIT 5;",
-      "success": true,
+      "question_id": 1344,
+      "question": "What was the notes of the fundraising on 2019/9/14?",
+      "gold_sql": "SELECT notes FROM income WHERE source = 'Fundraising' AND date_received = '2019-09-14'",
+      "generated_sql": "SELECT notes FROM fundraising_events WHERE event_date = '2019-09-14' ;",
+      "execution_success": true,
+      "semantic_correct": false,
+      "comparison_notes": "",
       "error_message": null,
-      "execution_time": 27.183512926101685,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "student_club",
-      "question_id": 1317,
-      "question": "Among the students from the Student_Club who attended the event \"Women's Soccer\", how many of them want a T-shirt that's in medium size?",
-      "gold_sql": "SELECT COUNT(T1.event_id) FROM event AS T1 INNER JOIN attendance AS T2 ON T1.event_id = T2.link_to_event INNER JOIN member AS T3 ON T2.link_to_member = T3.member_id WHERE T1.event_name = 'Women''s Soccer' AND T3.t_shirt_size = 'Medium'",
-      "generated_sql": null,
-      "success": false,
-      "error_message": "Query execution failed: syntax error at or near \"s\"\nLINE 1: ...(*) FROM attendance WHERE link_to_event = 'Women\\'s Soccer' ...\n                                                             ^\n",
-      "execution_time": 13.64678144454956,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "student_club",
-      "question_id": 1457,
-      "question": "Give the full name and contact number of members who had to spend more than average on each expense.",
-      "gold_sql": "SELECT DISTINCT T3.first_name, T3.last_name, T3.phone FROM expense AS T1 INNER JOIN budget AS T2 ON T1.link_to_budget = T2.budget_id INNER JOIN member AS T3 ON T3.member_id = T1.link_to_member WHERE T1.cost > (SELECT AVG(T1.cost) FROM expense AS T1 INNER JOIN budget AS T2 ON T1.link_to_budget = T2.budget_id INNER JOIN member AS T3 ON T3.member_id = T1.link_to_member)",
-      "generated_sql": "SELECT * FROM member LIMIT 5;",
-      "success": true,
-      "error_message": null,
-      "execution_time": 24.124936819076538,
-      "difficulty": "challenging",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "thrombosis_prediction",
-      "question_id": 1227,
-      "question": "What is the average age of the male patient with high cholesterol?",
-      "gold_sql": "SELECT AVG(EXTRACT(YEAR FROM CURRENT_DATE) - EXTRACT(YEAR FROM T1.Birthday)) FROM Patient AS T1 INNER JOIN Laboratory AS T2 ON T1.ID = T2.ID WHERE T2.\"T-CHO\" >= 250 AND T1.SEX = 'M'",
-      "generated_sql": null,
-      "success": false,
-      "error_message": "Query execution failed: relation \"patients\" does not exist\nLINE 1: SELECT AVG(p.age) AS average_age FROM patients p JOIN diagno...\n                                              ^\n",
-      "execution_time": 22.7417893409729,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "thrombosis_prediction",
-      "question_id": 1281,
-      "question": "Among the patients who have an abnormal level of glutamic oxaloacetic transaminase, when was the youngest of them born?",
-      "gold_sql": "SELECT T1.Birthday FROM Patient AS T1 INNER JOIN Laboratory AS T2 ON T1.ID = T2.ID WHERE T2.GOT >= 60 ORDER BY T1.Birthday DESC NULLS LAST LIMIT 1",
-      "generated_sql": null,
-      "success": false,
-      "error_message": "Query execution failed: relation \"patients\" does not exist\nLINE 1: ...ECT MIN(p.birth_date) AS youngest_birth_date FROM patients p...\n                                                             ^\n",
-      "execution_time": 22.265072345733643,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "thrombosis_prediction",
-      "question_id": 1254,
-      "question": "How many patients with a normal Ig A level came to the hospital after 1990/1/1?",
-      "gold_sql": "SELECT COUNT(T1.ID) FROM Patient AS T1 INNER JOIN Laboratory AS T2 ON T1.ID = T2.ID WHERE T2.IGA BETWEEN 80 AND 500 AND TO_CHAR(CAST(T1.\"First Date\" AS TIMESTAMP), 'YYYY') > '1990'",
-      "generated_sql": null,
-      "success": false,
-      "error_message": "Query execution failed: relation \"laboratory_result\" does not exist\nLINE 1: ...(DISTINCT p.patient_id) FROM patient p INNER JOIN laboratory...\n                                                             ^\n",
-      "execution_time": 26.825973510742188,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "european_football_2",
-      "question_id": 1136,
-      "question": "How many players had the highest potential score for crossing that preferred to use their left foots while attacking?",
-      "gold_sql": "SELECT COUNT(t1.id) FROM Player_Attributes AS t1 WHERE t1.preferred_foot = 'left' AND t1.crossing = (SELECT MAX(crossing) FROM Player_Attributes)",
-      "generated_sql": "SELECT COUNT(*) FROM atom WHERE element = 'cl' AND molecule_id = 'TR000' AND atom_id IN (SELECT atom_id FROM atom WHERE element = 'cl' AND molecule_id = 'TR000');",
-      "success": true,
-      "error_message": null,
-      "execution_time": 7.661559104919434,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "european_football_2",
-      "question_id": 1029,
-      "question": "What are the speed in which attacks are put together of the top 4 teams with the highest build Up Play Speed?",
-      "gold_sql": "SELECT t1.buildUpPlaySpeed FROM Team_Attributes AS t1 INNER JOIN Team AS t2 ON t1.team_api_id = t2.team_api_id ORDER BY t1.buildUpPlaySpeed ASC NULLS FIRST LIMIT 4",
-      "generated_sql": "SELECT * FROM atom WHERE element = 'cl' LIMIT 4;",
-      "success": true,
-      "error_message": null,
-      "execution_time": 27.91416883468628,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "european_football_2",
-      "question_id": 1057,
-      "question": "Calculate the average home team goal in the 2010/2011 season in the country of Poland.",
-      "gold_sql": "SELECT CAST(SUM(t2.home_team_goal) AS REAL) / NULLIF(COUNT(t2.id), 0) FROM Country AS t1 INNER JOIN Match AS t2 ON t1.id = t2.country_id WHERE t1.name = 'Poland' AND t2.season = '2010/2011'",
-      "generated_sql": null,
-      "success": false,
-      "error_message": "Query execution failed: column c.country_id does not exist\nLINE 1: ...als FROM match m JOIN country c ON m.country_id = c.country_...\n                                                             ^\nHINT:  Perhaps you meant to reference the column \"m.country_id\".\n",
-      "execution_time": 20.105162143707275,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "formula_1",
-      "question_id": 846,
-      "question": "Please list the reference names of the drivers who are eliminated in the first period in race number 20.",
-      "gold_sql": "SELECT T2.driverRef FROM qualifying AS T1 INNER JOIN drivers AS T2 ON T2.driverId = T1.driverId WHERE T1.raceId = 20 ORDER BY T1.q1 DESC NULLS LAST LIMIT 5",
-      "generated_sql": null,
-      "success": false,
-      "error_message": "Query execution failed: relation \"race_status\" does not exist\nLINE 1: SELECT D.reference_name FROM drivers D JOIN race_status RS O...\n                                                    ^\n",
-      "execution_time": 19.189799547195435,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "formula_1",
-      "question_id": 1011,
-      "question": "Which top 20 driver created the shortest lap time ever record in a Formula_1 race? Please give them full names.",
-      "gold_sql": "WITH lap_times_in_seconds AS (SELECT driverId, (CASE WHEN SPLIT_PART(time, ':', 1) <> '' THEN CAST(SPLIT_PART(time, ':', 1) AS float) * 60 ELSE 0 END + CASE WHEN SPLIT_PART(SPLIT_PART(time, ':', 2), '.', 1) <> '' THEN CAST(SPLIT_PART(SPLIT_PART(time, ':', 2), '.', 1) AS float) ELSE 0 END + CASE WHEN SPLIT_PART(SPLIT_PART(time, ':', 2), '.', 2) <> '' THEN CAST(SPLIT_PART(SPLIT_PART(time, ':', 2), '.', 2) AS float) / 1000 ELSE 0 END) AS time_in_seconds FROM lapTimes) SELECT T2.forename, T2.surname, T1.driverId FROM (SELECT driverId, MIN(time_in_seconds) AS min_time_in_seconds FROM lap_times_in_seconds GROUP BY driverId) AS T1 INNER JOIN drivers AS T2 ON T1.driverId = T2.driverId ORDER BY T1.min_time_in_seconds ASC LIMIT 20",
-      "generated_sql": "SELECT * FROM atom LIMIT 5;",
-      "success": true,
-      "error_message": null,
-      "execution_time": 18.76614212989807,
-      "difficulty": "challenging",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "formula_1",
-      "question_id": 897,
-      "question": "Name the driver with the most winning. Mention his nationality and what is his maximum point scores.",
-      "gold_sql": "SELECT T1.forename, T1.surname, T1.nationality, MAX(T2.points) FROM drivers AS T1 INNER JOIN driverStandings AS T2 ON T2.driverId = T1.driverId WHERE T2.wins >= 1 GROUP BY T1.forename, T1.surname, T1.nationality ORDER BY COUNT(T2.wins) DESC NULLS LAST LIMIT 1",
-      "generated_sql": "SELECT * FROM atom WHERE element = 'cl';",
-      "success": true,
-      "error_message": null,
-      "execution_time": 17.01287841796875,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "superhero",
-      "question_id": 743,
-      "question": "What is the percentage of superheroes who act in their own self-interest or make decisions based on their own moral code? Indicate how many of the said superheroes were published by Marvel Comics.",
-      "gold_sql": "SELECT (CAST(COUNT(*) AS REAL) * 100 / NULLIF((SELECT COUNT(*) FROM superhero), 0)), CAST(SUM(CASE WHEN T2.publisher_name = 'Marvel Comics' THEN 1 ELSE 0 END) AS REAL) FROM superhero AS T1 INNER JOIN publisher AS T2 ON T1.publisher_id = T2.id INNER JOIN alignment AS T3 ON T3.id = T1.alignment_id WHERE T3.alignment = 'Bad'",
-      "generated_sql": "SELECT (COUNT(CASE WHEN element = 'cl' THEN atom_id END) * 1.0 / COUNT(atom_id)) * 100 AS percentage, COUNT(CASE WHEN element = 'cl' THEN atom_id END) AS marvel_superheroes FROM atom;",
-      "success": true,
-      "error_message": null,
-      "execution_time": 25.41737174987793,
-      "difficulty": "challenging",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "superhero",
-      "question_id": 730,
-      "question": "List the superheroes from Marvel Comics who have the super power of 'Super Strength'.",
-      "gold_sql": "SELECT superhero_name FROM superhero AS T1 WHERE EXISTS(SELECT 1 FROM hero_power AS T2 INNER JOIN superpower AS T3 ON T2.power_id = T3.id WHERE T3.power_name = 'Super Strength' AND T1.id = T2.hero_id) AND EXISTS(SELECT 1 FROM publisher AS T4 WHERE T4.publisher_name = 'Marvel Comics' AND T1.publisher_id = T4.id)",
-      "generated_sql": "SELECT * FROM atom WHERE element = 'cl';",
-      "success": true,
-      "error_message": null,
-      "execution_time": 12.400353193283081,
-      "difficulty": "challenging",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "superhero",
-      "question_id": 726,
-      "question": "Rank heroes published by Marvel Comics by their height in descending order.",
-      "gold_sql": "SELECT superhero_name, height_cm, RANK() OVER (ORDER BY height_cm DESC NULLS LAST) AS HeightRank FROM superhero INNER JOIN publisher ON superhero.publisher_id = publisher.id WHERE publisher.publisher_name = 'Marvel Comics'",
-      "generated_sql": "SELECT * FROM atom WHERE element = 'cl' ORDER BY atom_id DESC;",
-      "success": true,
-      "error_message": null,
-      "execution_time": 25.21760392189026,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "codebase_community",
-      "question_id": 669,
-      "question": "When did 'chl' cast its first vote in a post?",
-      "gold_sql": "SELECT T2.CreationDate FROM users AS T1 INNER JOIN votes AS T2 ON T1.Id = T2.UserId WHERE T1.DisplayName = 'chl' ORDER BY T2.CreationDate NULLS FIRST LIMIT 1",
-      "generated_sql": "SELECT MIN(T1.link_to_event) FROM attendance AS T1 INNER JOIN atom AS T2 ON T1.link_to_member = T2.atom_id WHERE T2.element = 'cl' GROUP BY T1.link_to_member HAVING T1.link_to_member = 'TR000_1';",
-      "success": true,
-      "error_message": null,
-      "execution_time": 19.697148323059082,
+      "execution_time": 22.440818548202515,
       "difficulty": "simple",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "codebase_community",
-      "question_id": 595,
-      "question": "Which user have only one post history per post and having at least 1000 views?",
-      "gold_sql": "SELECT T2.UserId FROM users AS T1 INNER JOIN postHistory AS T2 ON T1.Id = T2.UserId INNER JOIN posts AS T3 ON T2.PostId = T3.Id WHERE T3.ViewCount >= 1000 GROUP BY T2.UserId HAVING COUNT(DISTINCT T2.PostHistoryTypeId) = 1",
-      "generated_sql": "SELECT link_to_member FROM attendance GROUP BY link_to_member, link_to_event HAVING COUNT(link_to_event) = 1;",
-      "success": true,
-      "error_message": null,
-      "execution_time": 37.037713289260864,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "codebase_community",
-      "question_id": 678,
-      "question": "Which post by Harvey Motulsky has the most views? Please give the id and title of this post.",
-      "gold_sql": "SELECT T2.Id, T2.Title FROM users AS T1 INNER JOIN posts AS T2 ON T1.Id = T2.OwnerUserId WHERE T1.DisplayName = 'Harvey Motulsky' ORDER BY T2.ViewCount DESC NULLS LAST LIMIT 1",
-      "generated_sql": "SELECT * FROM posts LIMIT 5;",
-      "success": true,
-      "error_message": null,
-      "execution_time": 20.32670521736145,
-      "difficulty": "simple",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "card_games",
-      "question_id": 459,
-      "question": "Which card costs more converted mana, \"Serra Angel\" or \"Shrine Keeper\"?",
-      "gold_sql": "SELECT name FROM cards WHERE name IN ('Serra Angel', 'Shrine Keeper') ORDER BY convertedManaCost DESC NULLS LAST LIMIT 1",
-      "generated_sql": "SELECT * FROM atom WHERE element = 'cl';",
-      "success": true,
-      "error_message": null,
-      "execution_time": 12.42830514907837,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "card_games",
-      "question_id": 479,
-      "question": "Among the cards with converted mana cost higher than 5 in the set Coldsnap, how many of them have unknown power?",
-      "gold_sql": "SELECT SUM(CASE WHEN T1.power = '*' OR T1.power IS NULL THEN 1 ELSE 0 END) FROM cards AS T1 INNER JOIN sets AS T2 ON T2.code = T1.setCode WHERE T2.name = 'Coldsnap' AND T1.convertedManaCost > 5",
-      "generated_sql": "SELECT COUNT(*) FROM atom WHERE element IS NULL;",
-      "success": true,
-      "error_message": null,
-      "execution_time": 13.876030206680298,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "card_games",
-      "question_id": 487,
-      "question": "What is the percentage of incredibly powerful cards in the set Coldsnap?",
-      "gold_sql": "SELECT CAST(SUM(CASE WHEN NOT T1.cardKingdomFoilId IS NULL AND NOT T1.cardKingdomId IS NULL THEN 1 ELSE 0 END) AS REAL) * 100 / NULLIF(COUNT(T1.id), 0) FROM cards AS T1 INNER JOIN sets AS T2 ON T2.code = T1.setCode WHERE T2.name = 'Coldsnap'",
-      "generated_sql": "SELECT * FROM cards LIMIT 5;",
-      "success": true,
-      "error_message": null,
-      "execution_time": 16.987815618515015,
-      "difficulty": "challenging",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "toxicology",
-      "question_id": 273,
-      "question": "What is the percentage of element chlorine in carcinogenic molecules?",
-      "gold_sql": "SELECT CAST(COUNT(CASE WHEN T1.element = 'cl' THEN T1.element ELSE NULL END) AS REAL) * 100 / NULLIF(COUNT(T1.element), 0) FROM atom AS T1 INNER JOIN molecule AS T2 ON T1.molecule_id = T2.molecule_id WHERE T2.label = '+'",
-      "generated_sql": "SELECT (COUNT(CASE WHEN a.element = 'cl' THEN 1 ELSE NULL END) * 1.0 / COUNT(a.atom_id)) * 100 AS percentage_of_chlorine FROM atom a;",
-      "success": true,
-      "error_message": null,
-      "execution_time": 12.759500503540039,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "toxicology",
-      "question_id": 219,
-      "question": "What is the percentage of carcinogenic molecules in triple type bonds?",
-      "gold_sql": "SELECT CAST(COUNT(DISTINCT CASE WHEN T2.label = '+' THEN T2.molecule_id ELSE NULL END) AS REAL) * 100 / NULLIF(COUNT(DISTINCT T2.molecule_id), 0) FROM atom AS T1 INNER JOIN molecule AS T2 ON T1.molecule_id = T2.molecule_id INNER JOIN bond AS T3 ON T2.molecule_id = T3.molecule_id WHERE T3.bond_type = '#'",
-      "generated_sql": "SELECT * FROM atom LIMIT 5;",
-      "success": true,
-      "error_message": null,
-      "execution_time": 16.731618881225586,
-      "difficulty": "challenging",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "toxicology",
-      "question_id": 197,
-      "question": "Calculate the average number of oxygen atoms in single-bonded molecules.",
-      "gold_sql": "SELECT AVG(oxygen_count) FROM (SELECT T1.molecule_id, COUNT(T1.element) AS oxygen_count FROM atom AS T1 INNER JOIN bond AS T2 ON T1.molecule_id = T2.molecule_id WHERE T2.bond_type = '-' AND T1.element = 'o' GROUP BY T1.molecule_id) AS oxygen_counts",
-      "generated_sql": "SELECT AVG(oxygen_count) AS average_oxygen_atoms FROM ( SELECT molecule_id, COUNT(*) AS oxygen_count FROM atom WHERE element = 'o' GROUP BY molecule_id ) AS oxygen_counts;",
-      "success": true,
-      "error_message": null,
-      "execution_time": 15.344239950180054,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "california_schools",
-      "question_id": 41,
-      "question": "List the names of virtual schools that are among the top 5 in their respective counties based on average reading scores.",
-      "gold_sql": "SELECT School FROM (SELECT T2.School, T1.AvgScrRead, RANK() OVER (PARTITION BY T2.County ORDER BY T1.AvgScrRead DESC NULLS LAST) AS rnk FROM satscores AS T1 INNER JOIN schools AS T2 ON T1.cds = T2.CDSCode WHERE T2.Virtual = 'F') AS ranked_schools WHERE rnk <= 5",
-      "generated_sql": "SELECT * FROM atom LIMIT 5;",
-      "success": true,
-      "error_message": null,
-      "execution_time": 30.63092803955078,
-      "difficulty": "simple",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "california_schools",
-      "question_id": 12,
-      "question": "Among the schools with an SAT excellence rate of over 0.3, what is the highest eligible free rate for students aged 5-17?",
-      "gold_sql": "SELECT MAX(CAST(T1.\"Free Meal Count (Ages 5-17)\" AS REAL) / NULLIF(T1.\"Enrollment (Ages 5-17)\", 0)) FROM frpm AS T1 INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds WHERE CAST(T2.NumGE1500 AS REAL) / NULLIF(T2.NumTstTakr, 0) > 0.3",
-      "generated_sql": "SELECT * FROM schools LIMIT 5;",
-      "success": true,
-      "error_message": null,
-      "execution_time": 37.49206852912903,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "california_schools",
-      "question_id": 31,
-      "question": "What is the eligible free rate of the 10th and 11th schools with the highest enrolment for students in grades 1 through 12?",
-      "gold_sql": "SELECT CAST(\"Free Meal Count (K-12)\" AS REAL) / NULLIF(\"Enrollment (K-12)\", 0) FROM frpm ORDER BY \"Enrollment (K-12)\" DESC NULLS LAST LIMIT 2 OFFSET 9",
-      "generated_sql": "SELECT * FROM schools LIMIT 5;",
-      "success": true,
-      "error_message": null,
-      "execution_time": 18.960710763931274,
-      "difficulty": "moderate",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "financial",
-      "question_id": 169,
-      "question": "What was the growth rate of the total amount of loans across all accounts for a male client between 1996 and 1997?",
-      "gold_sql": "SELECT CAST((SUM(CASE WHEN TO_CHAR(CAST(T1.date AS TIMESTAMP), 'YYYY') = '1997' THEN T1.amount ELSE 0 END) - SUM(CASE WHEN TO_CHAR(CAST(T1.date AS TIMESTAMP), 'YYYY') = '1996' THEN T1.amount ELSE 0 END)) AS REAL) * 100 / NULLIF(SUM(CASE WHEN TO_CHAR(CAST(T1.date AS TIMESTAMP), 'YYYY') = '1996' THEN T1.amount ELSE 0 END), 0) FROM loan AS T1 INNER JOIN account AS T2 ON T1.account_id = T2.account_id INNER JOIN disp AS T3 ON T3.account_id = T2.account_id INNER JOIN client AS T4 ON T4.client_id = T3.client_id WHERE T4.gender = 'M' AND T3.type = 'OWNER'",
-      "generated_sql": null,
-      "success": false,
-      "error_message": "Query execution failed: relation \"clients\" does not exist\nLINE 1: ...oan_amount ELSE 0 END)) * 100 AS growth_rate FROM clients c ...\n                                                             ^\n",
-      "execution_time": 32.83129692077637,
-      "difficulty": "challenging",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "financial",
-      "question_id": 92,
-      "question": "List out the no. of districts that have female average salary is more than 6000 but less than 10000?",
-      "gold_sql": "SELECT COUNT(DISTINCT T2.district_id) FROM client AS T1 INNER JOIN district AS T2 ON T1.district_id = T2.district_id WHERE T1.gender = 'F' AND T2.A11 BETWEEN 6000 AND 10000",
-      "generated_sql": "SELECT * FROM client LIMIT 5;",
-      "success": true,
-      "error_message": null,
-      "execution_time": 18.835337162017822,
-      "difficulty": "simple",
-      "hardness": "unknown"
-    },
-    {
-      "db_id": "financial",
-      "question_id": 192,
-      "question": "What is the average amount of loan which are still on running contract with statement issuance after each transaction?",
-      "gold_sql": "SELECT AVG(T2.amount) FROM account AS T1 INNER JOIN loan AS T2 ON T1.account_id = T2.account_id WHERE T2.status IN ('C', 'D') AND T1.frequency = 'POPLATEK PO OBRATU'",
-      "generated_sql": null,
-      "success": false,
-      "error_message": "Query execution failed: relation \"contract\" does not exist\nLINE 1: ...l.amount) AS average_loan_amount FROM loan l JOIN contract c...\n                                                             ^\n",
-      "execution_time": 25.492724418640137,
-      "difficulty": "moderate",
       "hardness": "unknown"
     }
   ],
-  "accuracy": 0.696969696969697,
+  "execution_accuracy": 1.0,
+  "semantic_accuracy": 0.0,
   "results_by_db": {
-    "debit_card_specializing": {
-      "total": 3,
-      "correct": 1,
-      "accuracy": 0.3333333333333333
-    },
     "student_club": {
-      "total": 3,
-      "correct": 2,
-      "accuracy": 0.6666666666666666
-    },
-    "thrombosis_prediction": {
-      "total": 3,
-      "correct": 0,
-      "accuracy": 0.0
-    },
-    "european_football_2": {
-      "total": 3,
-      "correct": 2,
-      "accuracy": 0.6666666666666666
-    },
-    "formula_1": {
-      "total": 3,
-      "correct": 2,
-      "accuracy": 0.6666666666666666
-    },
-    "superhero": {
-      "total": 3,
-      "correct": 3,
-      "accuracy": 1.0
-    },
-    "codebase_community": {
-      "total": 3,
-      "correct": 3,
-      "accuracy": 1.0
-    },
-    "card_games": {
-      "total": 3,
-      "correct": 3,
-      "accuracy": 1.0
-    },
-    "toxicology": {
-      "total": 3,
-      "correct": 3,
-      "accuracy": 1.0
-    },
-    "california_schools": {
-      "total": 3,
-      "correct": 3,
-      "accuracy": 1.0
-    },
-    "financial": {
-      "total": 3,
-      "correct": 1,
-      "accuracy": 0.3333333333333333
+      "total": 1,
+      "execution_success": 1,
+      "semantic_correct": 0,
+      "execution_accuracy": 1.0,
+      "semantic_accuracy": 0.0
     }
   },
   "results_by_difficulty": {
-    "moderate": {
-      "total": 22,
-      "correct": 13,
-      "accuracy": 0.5909090909090909
-    },
-    "challenging": {
-      "total": 7,
-      "correct": 6,
-      "accuracy": 0.8571428571428571
-    },
     "simple": {
-      "total": 4,
-      "correct": 4,
-      "accuracy": 1.0
+      "total": 1,
+      "execution_success": 1,
+      "semantic_correct": 0,
+      "execution_accuracy": 1.0,
+      "semantic_accuracy": 0.0
     }
   },
   "results_by_hardness": {
     "unknown": {
-      "total": 33,
-      "correct": 23,
-      "accuracy": 0.696969696969697
+      "total": 1,
+      "execution_success": 1,
+      "semantic_correct": 0,
+      "execution_accuracy": 1.0,
+      "semantic_accuracy": 0.0
     }
   }
 }
