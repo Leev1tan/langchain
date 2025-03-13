@@ -92,9 +92,6 @@ If you use MAC-SQL in your research, please cite the original paper:
 }
 ```
 
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Acknowledgements
 
