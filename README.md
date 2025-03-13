@@ -1,16 +1,20 @@
 # MAC-SQL: Memory, Attention, and Composition for Text-to-SQL
 
-MAC-SQL is an innovative agent that uses Memory, Attention, and Composition techniques for text-to-SQL generation. 
-This project implements the MAC-SQL agent using LangChain, Together AI models, and provides a Streamlit interface for interaction.
+MAC-SQL is an innovative framework that uses Memory, Attention, and Composition techniques for text-to-SQL generation. 
+This project implements a multi-agent collaborative architecture based on the [MAC-SQL paper](https://arxiv.org/abs/2312.11242) using LangChain, Together AI models, and provides a Streamlit interface for interaction.
 
 ## Features
 
-- **Memory**: Maintains conversation context for better SQL generation
+- **Multi-Agent Architecture**: Three specialized agents work together
+  - **Selector**: Handles schema and example selection
+  - **Decomposer**: Understands questions and plans queries
+  - **Refiner**: Generates and refines SQL queries
+- **Memory**: Maintains conversation context and example store
 - **Attention**: Focuses on relevant schema information
 - **Composition**: Multi-step process for SQL generation
 - **Evaluation**: Benchmark evaluation on mini-bird dataset
-- **User Interface**: Streamlit web interface for interaction
-- **Database Support**: Works with both PostgreSQL and SQLite
+- **Database Support**: Works with PostgreSQL databases
+- **User Interface**: Streamlit web interface with chat interface
 
 ## Quick Start
 
@@ -28,99 +32,120 @@ This project implements the MAC-SQL agent using LangChain, Together AI models, a
    pip install -r requirements.txt
    ```
 
-3. Configure PostgreSQL settings in `int.py` (already provided) if using PostgreSQL.
+3. Set up the database:
+   ```
+   python run_mac_sql.py --setup
+   ```
+   
+   This will import the mini-bird benchmark databases into PostgreSQL.
 
 ### Running the Application
 
-Use the `run.py` script for easy execution:
+Use the `run_mac_sql.py` script for easy execution:
 
 ```
-# Start the Streamlit UI with PostgreSQL
-python run.py --ui
+# Start the Streamlit UI
+python run_mac_sql.py --ui
 
-# Start the Streamlit UI with SQLite (recommended for benchmark)
-python run.py --ui-sqlite
+# Run benchmark evaluation
+python run_mac_sql.py --evaluate
 
-# Run benchmark evaluation with PostgreSQL
-python run.py --evaluate --db card_games test_results
-
-# Run benchmark evaluation with SQLite (recommended)
-python run.py --evaluate-sqlite --db card_games --visualize
+# Run a single query
+python run_mac_sql.py --question "How many players are there in the card games database?"
 ```
 
 Alternatively, you can directly run:
 
 ```
-# Start the Streamlit UI with PostgreSQL
-streamlit run mac_sql_agent.py
+# Start the Streamlit UI
+streamlit run app.py
 
-# Start the Streamlit UI with SQLite
-streamlit run mac_sql_agent_sqlite.py
-
-# Run evaluation with PostgreSQL
-python evaluate.py --db card_games test_results
-
-# Run evaluation with SQLite
-python evaluate_sqlite.py --db card_games test_results
+# Run evaluation
+python evaluate.py --benchmark dev_20240627/dev.json --samples_per_db 5
 ```
 
 ## Project Structure
 
 ```
 .
-├── mac_sql_agent.py         # PostgreSQL-based agent implementation
-├── mac_sql_agent_sqlite.py  # SQLite-based agent implementation
-├── sqlite_adapter.py        # SQLite database adapter
-├── evaluate.py              # PostgreSQL evaluation script
-├── evaluate_sqlite.py       # SQLite evaluation script
-├── run.py                   # Convenience script for running the project
-├── requirements.txt         # Project dependencies
-├── int.py                   # PostgreSQL configuration
-├── results/                 # Evaluation results
-└── dev_20240627/            # Mini-bird benchmark dataset
+├── core/                      # Core components
+│   ├── __init__.py           # Package initialization
+│   ├── agents.py             # Agent implementations
+│   └── chat_manager.py       # Agent coordination
+├── mac_sql.py                # Main MAC-SQL class
+├── app.py                    # Streamlit UI
+├── db_setup.py               # Database setup script
+├── run_mac_sql.py            # Convenience runner script
+├── evaluate.py               # Evaluation script
+├── requirements.txt          # Project dependencies
+├── results/                  # Evaluation results directory
+└── minidev/                  # Mini-bird benchmark dataset
 ```
 
 ## Technical Details
 
-MAC-SQL leverages LangChain to implement a text-to-SQL agent with memory, attention, and composition capabilities:
+### Multi-Agent Architecture
 
-1. **Memory**: Conversation buffer memory for context tracking
-2. **Attention**: Schema-based retrieval to focus on relevant database information
-3. **Composition**: Step-by-step SQL generation:
-   - Question understanding
-   - Schema analysis
-   - Query planning
-   - SQL generation
-   - SQL validation
+The MAC-SQL framework features three specialized agents:
 
-## Database Support
+1. **Selector Agent**:
+   - Focuses on selecting relevant schema information
+   - Identifies similar examples from past queries
+   - Reduces the size of context sent to other agents
 
-The project supports two database backends:
+2. **Decomposer Agent**:
+   - Understands what the question is asking for
+   - Breaks down complex questions into parts
+   - Creates a step-by-step plan for SQL generation
 
-1. **PostgreSQL**: Requires a PostgreSQL server and database setup
-2. **SQLite**: Uses the SQLite databases included in the mini-bird benchmark
+3. **Refiner Agent**:
+   - Generates SQL based on the understanding and plan
+   - Verifies SQL syntax and logic
+   - Refines queries when errors occur
 
-For benchmark evaluation, the SQLite implementation is recommended as it:
-- Works directly with the benchmark databases
-- Eliminates SQL dialect conversion issues
-- Doesn't require setting up a PostgreSQL server
+### Workflow
+
+1. User submits a natural language question
+2. **Selector** identifies relevant schema and examples
+3. **Decomposer** analyzes the question and creates a query plan
+4. **Refiner** generates, verifies, and refines the SQL query
+5. The query is executed against the database
+6. Results are presented to the user
+
+## Database Setup
+
+To use MAC-SQL, you'll need to set up a PostgreSQL database and import the mini-bird benchmark datasets:
+
+1. Ensure PostgreSQL is installed and running
+2. Configure connection details in `core/chat_manager.py` if needed
+3. Run the setup script:
+   ```
+   python run_mac_sql.py --setup
+   ```
 
 ## Benchmark Evaluation
 
 The agent is evaluated on the mini-bird benchmark which provides a set of natural language questions and expected SQL queries for different databases.
 
-The evaluation script supports:
-- Filtering by database
-- Limiting samples per database
-- Result visualization
-- Detailed error analysis
+Evaluation metrics include:
+- **Execution Accuracy**: Percentage of queries that produce correct results
+- **Per-database Performance**: Breakdown of accuracy by database
 
 ## Requirements
 
 - Python 3.8+
-- PostgreSQL (optional)
+- PostgreSQL server
 - Dependencies listed in requirements.txt
 
-## License
+## Citation
 
-This project is for educational purposes only. 
+If you find this implementation useful, please cite the original MAC-SQL paper:
+
+```
+@inproceedings{macsql-2025,
+  title={MAC-SQL: A Multi-Agent Collaborative Framework for Text-to-SQL},
+  author={Wang, Bing and Ren, Changyu and Yang, Jian and others},
+  booktitle={Proceedings of the International Conference on Computational Linguistics},
+  year={2025}
+}
+``` 

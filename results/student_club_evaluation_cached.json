@@ -1,0 +1,151 @@
+{
+  "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+  "timestamp": "2025-03-12 23:55:22",
+  "execution_accuracy": 0.0,
+  "correct": 0,
+  "total": 5,
+  "error_count": 5,
+  "detailed_results": [
+    {
+      "db_id": "student_club",
+      "question": "What is the total amount of income received in 2019, grouped by source?",
+      "question_id": 2,
+      "gold_sql": "SELECT source, SUM(amount) AS total_amount FROM income WHERE date_received LIKE '2019-%' GROUP BY source;",
+      "results_match": false,
+      "generated_sql": "",
+      "understanding": "",
+      "plan": "",
+      "error": "No SQL was generated",
+      "gold_result": {
+        "success": true,
+        "column_names": [
+          "source",
+          "total_amount"
+        ],
+        "rows": [
+          {
+            "source": "Dues",
+            "total_amount": 1500
+          },
+          {
+            "source": "Fundraising",
+            "total_amount": 200
+          },
+          {
+            "source": "School Appropration",
+            "total_amount": 3000
+          },
+          {
+            "source": "Sponsorship",
+            "total_amount": 1000
+          }
+        ],
+        "row_count": 4
+      },
+      "execution_time": 0.0030024051666259766,
+      "complexity": "medium",
+      "query_type": "group_aggregation"
+    },
+    {
+      "db_id": "student_club",
+      "question": "What is the total amount spent on all events?",
+      "question_id": 5,
+      "gold_sql": "SELECT SUM(amount) FROM expense;",
+      "results_match": false,
+      "generated_sql": "",
+      "understanding": "",
+      "plan": "",
+      "error": "No SQL was generated",
+      "gold_result": {
+        "success": true,
+        "column_names": [
+          "sum"
+        ],
+        "rows": [
+          {
+            "sum": 1400
+          }
+        ],
+        "row_count": 1
+      },
+      "execution_time": 0.001001119613647461,
+      "complexity": "medium",
+      "query_type": "aggregation"
+    },
+    {
+      "db_id": "student_club",
+      "question": "Which members joined the club in 2020?",
+      "question_id": 3,
+      "gold_sql": "SELECT first_name, last_name FROM member WHERE join_date LIKE '2020-%';",
+      "results_match": false,
+      "generated_sql": "",
+      "understanding": "",
+      "plan": "",
+      "error": "No SQL was generated",
+      "gold_result": {
+        "success": true,
+        "column_names": [
+          "first_name",
+          "last_name"
+        ],
+        "rows": [],
+        "row_count": 0
+      },
+      "execution_time": 0.0010006427764892578,
+      "complexity": "simple",
+      "query_type": "join"
+    },
+    {
+      "db_id": "student_club",
+      "question": "How many records are in the member table?",
+      "question_id": 1,
+      "gold_sql": "SELECT COUNT(*) FROM member;",
+      "results_match": false,
+      "generated_sql": "",
+      "understanding": "",
+      "plan": "",
+      "error": "No SQL was generated",
+      "gold_result": {
+        "success": true,
+        "column_names": [
+          "count"
+        ],
+        "rows": [
+          {
+            "count": 33
+          }
+        ],
+        "row_count": 1
+      },
+      "execution_time": 0.0,
+      "complexity": "medium",
+      "query_type": "aggregation"
+    },
+    {
+      "db_id": "student_club",
+      "question": "What are the names of all events that have expenses over $100?",
+      "question_id": 4,
+      "gold_sql": "SELECT e.name FROM event e JOIN expense x ON e.id = x.event_id WHERE x.amount > 100;",
+      "results_match": false,
+      "generated_sql": "",
+      "understanding": "",
+      "plan": "",
+      "error": "No SQL was generated",
+      "gold_result": {
+        "success": false,
+        "error": "column e.id does not exist\nLINE 1: SELECT e.name FROM event e JOIN expense x ON e.id = x.event_...\n                                                     ^\n"
+      },
+      "execution_time": 0.0010001659393310547,
+      "complexity": "simple",
+      "query_type": "join"
+    }
+  ],
+  "results_by_database": {
+    "student_club": {
+      "correct": 0,
+      "total": 5,
+      "accuracy": 0.0
+    }
+  },
+  "evaluation_time": 0.03803443908691406
+}

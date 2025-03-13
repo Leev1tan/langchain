@@ -1,0 +1,37 @@
+[
+  {
+    "db_id": "student_club",
+    "question": "How many records are in the member table?",
+    "query": "SELECT COUNT(*) FROM member;",
+    "complexity": "simple",
+    "question_id": 1
+  },
+  {
+    "db_id": "student_club",
+    "question": "What is the total amount of income received in 2019, grouped by source?",
+    "query": "SELECT source, SUM(amount) AS total_amount FROM income WHERE date_received LIKE '2019-%' GROUP BY source;",
+    "complexity": "medium",
+    "question_id": 2
+  },
+  {
+    "db_id": "student_club",
+    "question": "Which members joined the club in 2020?",
+    "query": "SELECT first_name, last_name FROM member WHERE join_date LIKE '2020-%';",
+    "complexity": "simple",
+    "question_id": 3
+  },
+  {
+    "db_id": "student_club",
+    "question": "What are the names of all events that have expenses over $100?",
+    "query": "SELECT e.name FROM event e JOIN expense x ON e.id = x.event_id WHERE x.amount > 100;",
+    "complexity": "complex",
+    "question_id": 4
+  },
+  {
+    "db_id": "student_club",
+    "question": "What is the total amount spent on all events?",
+    "query": "SELECT SUM(amount) FROM expense;",
+    "complexity": "simple",
+    "question_id": 5
+  }
+]

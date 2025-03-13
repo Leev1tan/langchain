@@ -1,0 +1,72 @@
+{
+  "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+  "timestamp": "2025-03-13 00:07:52",
+  "execution_accuracy": 60.0,
+  "correct": 3,
+  "total": 5,
+  "error_count": 1,
+  "detailed_results": [
+    {
+      "question_id": 1,
+      "db_id": "student_club",
+      "question": "How many records are in the member table?",
+      "gold_sql": "SELECT COUNT(*) FROM member;",
+      "generated_sql": "SELECT COUNT(*) \nFROM member;",
+      "results_match": true,
+      "execution_time": 7.76753044128418,
+      "error": null,
+      "complexity": "simple"
+    },
+    {
+      "question_id": 2,
+      "db_id": "student_club",
+      "question": "What is the total amount of income received in 2019, grouped by source?",
+      "gold_sql": "SELECT source, SUM(amount) AS total_amount FROM income WHERE date_received LIKE '2019-%' GROUP BY source;",
+      "generated_sql": "SELECT \n  source, \n  SUM(amount) AS total_amount\nFROM \n  income\nWHERE \n  EXTRACT(YEAR FROM date_received::date) = 2019\nGROUP BY \n  source;",
+      "results_match": true,
+      "execution_time": 18.11382007598877,
+      "error": null,
+      "complexity": "medium"
+    },
+    {
+      "question_id": 3,
+      "db_id": "student_club",
+      "question": "Which members joined the club in 2020?",
+      "gold_sql": "SELECT first_name, last_name FROM member WHERE join_date LIKE '2020-%';",
+      "generated_sql": "SELECT *\nFROM member\nWHERE EXTRACT(YEAR FROM join_date) = 2020;",
+      "results_match": false,
+      "execution_time": 11.259561777114868,
+      "error": "function pg_catalog.extract(unknown, text) does not exist\nLINE 3: WHERE EXTRACT(YEAR FROM join_date) = 2020;\n              ^\nHINT:  No function matches the given name and argument types. You might need to add explicit type casts.\n",
+      "complexity": "simple"
+    },
+    {
+      "question_id": 4,
+      "db_id": "student_club",
+      "question": "What are the names of all events that have expenses over $100?",
+      "gold_sql": "SELECT e.name FROM event e JOIN expense x ON e.id = x.event_id WHERE x.amount > 100;",
+      "generated_sql": "SELECT event_name\nFROM event\nWHERE budget > 100;",
+      "results_match": false,
+      "execution_time": 12.83953046798706,
+      "error": null,
+      "complexity": "complex"
+    },
+    {
+      "question_id": 5,
+      "db_id": "student_club",
+      "question": "What is the total amount spent on all events?",
+      "gold_sql": "SELECT SUM(amount) FROM expense;",
+      "generated_sql": "SELECT SUM(budget) FROM event;",
+      "results_match": true,
+      "execution_time": 5.784306287765503,
+      "error": null,
+      "complexity": "simple"
+    }
+  ],
+  "results_by_database": {
+    "student_club": {
+      "correct": 3,
+      "total": 5,
+      "accuracy": 60.0
+    }
+  }
+}
