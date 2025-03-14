@@ -1,217 +1,440 @@
 """
-MAC-SQL Streamlit App
-=====================
-
-This module provides a Streamlit web interface for the MAC-SQL framework.
+Streamlit app for MAC-SQL: Multi-Agent Collaboration for SQL Generation
 """
 
-import os
-import pandas as pd
 import streamlit as st
-from typing import Dict, Any
-
+import pandas as pd
+import json
+import os
+import matplotlib.pyplot as plt
+import time
 from mac_sql import MACSQL
-from core.chat_manager import DB_CONFIG
 
-# Set page config
+# Setup page config
 st.set_page_config(
-    page_title="MAC-SQL | Memory, Attention & Composition for Text-to-SQL",
-    page_icon="🧠",
-    layout="wide"
+    page_title="MAC-SQL Dashboard",
+    page_icon="🤖",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Define available models
-MODEL_OPTIONS = {
-    "Meta Llama 3.3 70B Instruct": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-    "Meta Llama 3.1 70B Instruct": "meta-llama/Meta-Llama-3.1-70B-Instruct",
-    "Meta Llama 3.1 8B Instruct": "meta-llama/Meta-Llama-3.1-8B-Instruct", 
-    "Mistral 7B Instruct v0.3": "mistral-7B-Instruct-v0.3",
-    "Qwen 1.5 72B Chat": "qwen-1.5-72B-Chat",
-    "Qwen2.5 7B Instruct": "qwen2.5-7B-Instruct"
-}
-
-def format_sql(sql: str) -> str:
-    """Format SQL query for display"""
-    return sql.replace("SELECT", "\nSELECT").replace("FROM", "\nFROM").replace("WHERE", "\nWHERE").replace("GROUP BY", "\nGROUP BY").replace("ORDER BY", "\nORDER BY").replace("HAVING", "\nHAVING").replace("JOIN", "\nJOIN")
-
-def initialize_session_state():
-    """Initialize session state variables"""
-    if "mac_sql" not in st.session_state:
-        st.session_state.mac_sql = None
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-    if "current_db" not in st.session_state:
-        st.session_state.current_db = "postgres"
-
-def create_sidebar() -> Dict[str, Any]:
-    """Create sidebar with configuration options"""
-    st.sidebar.title("MAC-SQL Configuration")
-    
-    # Model selection
-    model_name = st.sidebar.selectbox(
-        "Select Model:",
-        options=list(MODEL_OPTIONS.keys()),
-        index=0
-    )
-    
-    # API key (optional)
-    api_key = st.sidebar.text_input(
-        "Together API Key (optional):",
-        type="password",
-        help="Leave blank to use default key"
-    )
-    
-    # Database configuration
-    st.sidebar.subheader("Database Configuration")
-    
-    db_config = DB_CONFIG.copy()
-    
-    db_config["dbname"] = st.sidebar.text_input("Database Name:", value=DB_CONFIG["dbname"])
-    db_config["user"] = st.sidebar.text_input("Username:", value=DB_CONFIG["user"])
-    db_config["password"] = st.sidebar.text_input("Password:", type="password", value=DB_CONFIG["password"])
-    db_config["host"] = st.sidebar.text_input("Host:", value=DB_CONFIG["host"])
-    db_config["port"] = st.sidebar.text_input("Port:", value=DB_CONFIG["port"])
-    
-    # Initialize or update MAC-SQL instance
-    if (st.session_state.mac_sql is None or 
-        st.session_state.current_db != db_config["dbname"] or
-        st.sidebar.button("Reconnect to Database")):
-        
-        with st.sidebar.spinner("Connecting to database..."):
-            st.session_state.mac_sql = MACSQL(
-                model_name=MODEL_OPTIONS[model_name],
-                api_key=api_key if api_key else None,
-                db_config=db_config
-            )
-            st.session_state.current_db = db_config["dbname"]
-        
-        st.sidebar.success(f"Connected to {db_config['dbname']} database!")
-        
-    # Reset conversation
-    if st.sidebar.button("Reset Conversation"):
-        st.session_state.chat_history = []
-    
-    # About section
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("About MAC-SQL")
-    st.sidebar.markdown(
-        """
-        MAC-SQL is a multi-agent collaborative framework for Text-to-SQL generation.
-        
-        **Features:**
-        - **Memory**: Maintains conversation history
-        - **Attention**: Focuses on relevant schema information
-        - **Composition**: Multi-step query generation
-        
-        Built using LangChain and Together AI.
-        """
-    )
-    
-    return {
-        "model_name": MODEL_OPTIONS[model_name],
-        "api_key": api_key if api_key else None,
-        "db_config": db_config
+# CSS styling
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        color: #4CAF50;
+        margin-bottom: 1rem;
     }
-
-def display_chat_history():
-    """Display chat history"""
-    for message in st.session_state.chat_history:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-            
-            if message["role"] == "assistant" and "sql" in message:
-                st.code(format_sql(message["sql"]), language="sql")
-                
-            if message["role"] == "assistant" and "result" in message:
-                if isinstance(message["result"], pd.DataFrame):
-                    st.dataframe(message["result"])
-                elif message["result"]:
-                    st.info(message["result"])
-
-def process_user_query(user_query: str, mac_sql: MACSQL):
-    """Process user query and update chat history"""
-    # Add user message to chat history
-    st.session_state.chat_history.append({
-        "role": "user",
-        "content": user_query
-    })
-    
-    # Display user message
-    with st.chat_message("user"):
-        st.markdown(user_query)
-    
-    # Process the query with MAC-SQL
-    with st.spinner("Thinking..."):
-        result = mac_sql.query(user_query)
-    
-    # Extract components from result
-    sql_query = result["sql_query"]
-    query_result = result["query_result"]
-    understanding = result.get("understanding", "")
-    plan = result.get("plan", "")
-    
-    # Format assistant response
-    response = "Here's the SQL query for your question:"
-    
-    # Add assistant message to chat history
-    assistant_message = {
-        "role": "assistant",
-        "content": response,
-        "sql": sql_query
+    .subheader {
+        font-size: 1.5rem;
+        color: #2E86C1;
+        margin-bottom: 1rem;
     }
+    .info-text {
+        font-size: 1rem;
+        color: #555;
+    }
+    .success-text {
+        color: #4CAF50;
+        font-weight: bold;
+    }
+    .error-text {
+        color: #E74C3C;
+        font-weight: bold;
+    }
+    .code-box {
+        background-color: #f5f5f5;
+        border-radius: 5px;
+        padding: 10px;
+        font-family: monospace;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+@st.cache_resource
+def get_macsql_instance(model_name="meta-llama/Llama-3.3-70B-Instruct-Turbo", api_key=None):
+    """Initialize and cache MAC-SQL instance"""
+    return MACSQL(model_name=model_name, api_key=api_key, verbose=True)
+
+def load_evaluation_results(file_path):
+    """Load evaluation results from a JSON file"""
+    if not os.path.exists(file_path):
+        return None
     
-    if isinstance(query_result, pd.DataFrame):
-        assistant_message["result"] = query_result
-    else:
-        assistant_message["result"] = query_result
-    
-    st.session_state.chat_history.append(assistant_message)
-    
-    # Display assistant message
-    with st.chat_message("assistant"):
-        st.markdown(response)
-        st.code(format_sql(sql_query), language="sql")
-        
-        if isinstance(query_result, pd.DataFrame):
-            st.dataframe(query_result)
-        else:
-            st.info(query_result)
-        
-        # Show reasoning process in an expander
-        with st.expander("Show reasoning process"):
-            st.subheader("Question Understanding")
-            st.markdown(understanding)
-            
-            st.subheader("SQL Planning")
-            st.markdown(plan)
-            
-            st.subheader("Relevant Tables")
-            st.markdown(", ".join(result.get("relevant_schema", [])))
+    with open(file_path, 'r') as f:
+        data = json.load(f)
+    return data
 
 def main():
-    """Main Streamlit app"""
-    # Initialize session state
-    initialize_session_state()
+    # Sidebar
+    st.sidebar.markdown('<div class="main-header">MAC-SQL Dashboard</div>', unsafe_allow_html=True)
+    st.sidebar.markdown('<div class="info-text">Multi-Agent Collaboration for SQL Generation</div>', unsafe_allow_html=True)
     
-    # Create sidebar and get configuration
-    config = create_sidebar()
+    # Navigation
+    page = st.sidebar.radio("Navigation", ["Query Interface", "Evaluation Results", "Benchmark Runner"])
     
-    # Main content
-    st.title("🧠 MAC-SQL")
-    st.subheader("Memory, Attention, and Composition for Text-to-SQL")
+    # Model selection
+    model_options = [
+        "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+        "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        "meta-llama/Llama-3.1-8B-Instruct",
+        "meta-llama/Llama-3.2-1B-Instruct",
+        "TogetherAI/togethercomputer/llama-2-7b",
+        "mistralai/Mistral-7B-Instruct-v0.2"
+    ]
+    selected_model = st.sidebar.selectbox("Select Model", model_options)
     
-    # Ensure MAC-SQL is initialized
-    if st.session_state.mac_sql is None:
-        st.warning("Please configure and connect to a database using the sidebar.")
+    # API Key
+    api_key = st.sidebar.text_input("Together API Key (optional)", type="password")
+    
+    # Initialize MAC-SQL instance
+    macsql = get_macsql_instance(model_name=selected_model, api_key=api_key)
+    
+    # Pages
+    if page == "Query Interface":
+        show_query_interface(macsql)
+    elif page == "Evaluation Results":
+        show_evaluation_results()
+    elif page == "Benchmark Runner":
+        show_benchmark_runner(macsql)
+
+def show_query_interface(macsql):
+    st.markdown('<div class="main-header">MAC-SQL Query Interface</div>', unsafe_allow_html=True)
+    st.markdown('<div class="info-text">Enter a natural language question to generate and execute SQL</div>', 
+                unsafe_allow_html=True)
+    
+    # Database selection
+    st.markdown('<div class="subheader">1. Select Database</div>', unsafe_allow_html=True)
+    
+    # Get available databases
+    try:
+        available_dbs = macsql.get_available_databases()
+        if available_dbs:
+            selected_db = st.selectbox("Database", available_dbs)
+        else:
+            st.warning("No databases available. Please check your PostgreSQL connection.")
+            selected_db = st.text_input("Enter Database Name")
+    except Exception as e:
+        st.error(f"Error retrieving databases: {str(e)}")
+        selected_db = st.text_input("Enter Database Name")
+    
+    # Connect to database button
+    if st.button("Connect to Database"):
+        with st.spinner(f"Connecting to database '{selected_db}'..."):
+            success = macsql.connect_to_database(selected_db)
+            if success:
+                st.success(f"Connected to database: {selected_db}")
+            else:
+                st.error(f"Failed to connect to database: {selected_db}")
+    
+    # Query input
+    st.markdown('<div class="subheader">2. Enter Your Question</div>', unsafe_allow_html=True)
+    question = st.text_area("Natural Language Question", 
+                            "List all customers who made purchases in the last month.", 
+                            height=100)
+    
+    # Run query button
+    if st.button("Generate SQL & Execute"):
+        if not question:
+            st.warning("Please enter a question.")
+            return
+            
+        with st.spinner("Processing your question..."):
+            # Connect to database if not already connected
+            if not macsql.chat_manager.connection:
+                if selected_db:
+                    macsql.connect_to_database(selected_db)
+                else:
+                    st.error("Please connect to a database first.")
+                    return
+            
+            # Process the query
+            start_time = time.time()
+            sql_query, results = macsql.process_query(question, selected_db)
+            execution_time = time.time() - start_time
+        
+        # Display results
+        st.markdown('<div class="subheader">Results</div>', unsafe_allow_html=True)
+        
+        # Display SQL
+        st.markdown("**Generated SQL:**")
+        st.code(sql_query, language="sql")
+        
+        # Display execution time
+        st.info(f"Execution time: {execution_time:.2f} seconds")
+        
+        # Display results
+        if isinstance(results, pd.DataFrame) and not results.empty:
+            st.markdown("**Query Results:**")
+            st.dataframe(results)
+            
+            # Download button for results
+            csv = results.to_csv(index=False)
+            st.download_button(
+                label="Download Results as CSV",
+                data=csv,
+                file_name="query_results.csv",
+                mime="text/csv",
+            )
+        elif isinstance(results, dict) and 'error' in results:
+            st.error(f"Error: {results['error']}")
+        else:
+            st.info("Query executed successfully but returned no results.")
+
+def show_evaluation_results():
+    st.markdown('<div class="main-header">Evaluation Results</div>', unsafe_allow_html=True)
+    
+    # File selector for evaluation results
+    results_dir = "results"
+    if not os.path.exists(results_dir):
+        st.warning("Results directory not found. Please run an evaluation first.")
+        return
+        
+    result_files = [f for f in os.listdir(results_dir) if f.endswith(".json")]
+    
+    if not result_files:
+        st.warning("No evaluation result files found. Please run an evaluation first.")
         return
     
-    # Display chat history
-    display_chat_history()
+    selected_file = st.selectbox("Select Results File", result_files)
+    file_path = os.path.join(results_dir, selected_file)
     
-    # Chat input
-    user_query = st.chat_input("Ask a question about your database...")
-    if user_query:
-        process_user_query(user_query, st.session_state.mac_sql)
+    # Load and display results
+    results = load_evaluation_results(file_path)
+    
+    if not results:
+        st.error(f"Failed to load results from {file_path}")
+        return
+    
+    # Display summary
+    st.markdown('<div class="subheader">Evaluation Summary</div>', unsafe_allow_html=True)
+    
+    # Create metrics
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric(
+            "SQL Match Rate", 
+            f"{results.get('sql_match_rate', 0):.2%}", 
+            f"{results.get('sql_match_count', 0)}/{results.get('total_items', 0)}"
+        )
+    with col2:
+        st.metric(
+            "Execution Success Rate", 
+            f"{results.get('execution_success_rate', 0):.2%}", 
+            f"{results.get('execution_success_count', 0)}/{results.get('total_items', 0)}"
+        )
+    with col3:
+        st.metric(
+            "Avg Similarity Score", 
+            f"{results.get('avg_similarity', 0):.4f}"
+        )
+    
+    # Display model info
+    st.info(f"Model: {results.get('model_name', 'Unknown')}")
+    st.info(f"Evaluation Time: {results.get('evaluation_time', 0):.2f} seconds")
+    
+    # Create visualization
+    st.markdown('<div class="subheader">Results Visualization</div>', unsafe_allow_html=True)
+    
+    # Database performance chart
+    if 'database_stats' in results:
+        db_stats = results['database_stats']
+        
+        # Create a dataframe for the chart
+        db_names = list(db_stats.keys())
+        match_rates = [db_stats[db].get('sql_match_rate', 0) for db in db_names]
+        exec_rates = [db_stats[db].get('execution_success_rate', 0) for db in db_names]
+        
+        chart_data = pd.DataFrame({
+            'Database': db_names,
+            'SQL Match Rate': match_rates,
+            'Execution Success Rate': exec_rates
+        })
+        
+        if not chart_data.empty:
+            # Plot with matplotlib
+            fig, ax = plt.subplots(figsize=(10, 6))
+            chart_data.plot(x='Database', y=['SQL Match Rate', 'Execution Success Rate'], 
+                           kind='bar', ax=ax)
+            ax.set_title('Performance by Database')
+            ax.set_ylabel('Rate')
+            ax.set_ylim(0, 1)
+            
+            # Display in Streamlit
+            st.pyplot(fig)
+    
+    # Detailed results
+    st.markdown('<div class="subheader">Detailed Results</div>', unsafe_allow_html=True)
+    
+    if 'results' in results:
+        detailed_results = results['results']
+        
+        # Convert to DataFrame for easier display
+        if detailed_results:
+            df_results = pd.DataFrame(detailed_results)
+            
+            # Add filters
+            if not df_results.empty:
+                # Filter by success/failure
+                status_filter = st.multiselect(
+                    "Filter by Status",
+                    options=["Successful Matches", "Failed Matches", "Execution Errors"],
+                    default=["Successful Matches", "Failed Matches", "Execution Errors"]
+                )
+                
+                filtered_df = df_results.copy()
+                
+                if "Successful Matches" in status_filter and "Failed Matches" not in status_filter:
+                    filtered_df = filtered_df[filtered_df['sql_match'] == True]
+                elif "Failed Matches" in status_filter and "Successful Matches" not in status_filter:
+                    filtered_df = filtered_df[filtered_df['sql_match'] == False]
+                    
+                if "Execution Errors" in status_filter:
+                    filtered_df = filtered_df[filtered_df['execution_success'] == False]
+                
+                # Display filtered results
+                st.dataframe(filtered_df)
+                
+                # Detailed view of selected result
+                st.markdown('<div class="subheader">Result Details</div>', unsafe_allow_html=True)
+                
+                # Select a result to view details
+                result_indices = list(range(len(filtered_df)))
+                if result_indices:
+                    selected_idx = st.selectbox("Select Result to View", result_indices)
+                    
+                    if 0 <= selected_idx < len(filtered_df):
+                        selected_result = filtered_df.iloc[selected_idx].to_dict()
+                        
+                        # Display details
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("**Question:**")
+                            st.markdown(f"{selected_result.get('question', '')}")
+                            
+                            st.markdown("**Database:**")
+                            st.markdown(f"{selected_result.get('db_id', '')}")
+                            
+                            st.markdown("**Understanding:**")
+                            st.markdown(f"{selected_result.get('understanding', '')}")
+                            
+                            st.markdown("**Plan:**")
+                            st.markdown(f"{selected_result.get('plan', '')}")
+                        
+                        with col2:
+                            st.markdown("**Gold SQL:**")
+                            st.code(selected_result.get('gold_sql', ''), language="sql")
+                            
+                            st.markdown("**Generated SQL:**")
+                            st.code(selected_result.get('generated_sql', ''), language="sql")
+                            
+                            # Success indicators
+                            sql_match = selected_result.get('sql_match', False)
+                            execution_success = selected_result.get('execution_success', False)
+                            
+                            if sql_match:
+                                st.markdown('<div class="success-text">✅ SQL Match</div>', unsafe_allow_html=True)
+                            else:
+                                st.markdown('<div class="error-text">❌ SQL Mismatch</div>', unsafe_allow_html=True)
+                                
+                            if execution_success:
+                                st.markdown('<div class="success-text">✅ Execution Success</div>', unsafe_allow_html=True)
+                            else:
+                                st.markdown('<div class="error-text">❌ Execution Failed</div>', unsafe_allow_html=True)
+                            
+                            # Similarity score
+                            similarity = selected_result.get('similarity_score', 0)
+                            st.progress(similarity)
+                            st.markdown(f"Similarity Score: {similarity:.4f}")
+
+def show_benchmark_runner(macsql):
+    st.markdown('<div class="main-header">Benchmark Runner</div>', unsafe_allow_html=True)
+    st.markdown('<div class="info-text">Run evaluation on benchmark datasets</div>', unsafe_allow_html=True)
+    
+    # Benchmark file selection
+    st.markdown('<div class="subheader">1. Select Benchmark</div>', unsafe_allow_html=True)
+    
+    benchmark_options = [
+        "minidev/MINIDEV/mini_dev_postgresql.json",
+        "minidev/MINIDEV/mini_dev_mysql.json",
+        "minidev/MINIDEV/mini_dev_sqlite.json"
+    ]
+    
+    selected_benchmark = st.selectbox("Benchmark File", benchmark_options)
+    
+    # Configuration
+    st.markdown('<div class="subheader">2. Configure Evaluation</div>', unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        num_samples = st.number_input("Samples per Database", min_value=1, max_value=50, value=5)
+        
+    with col2:
+        output_file = st.text_input("Output File", "results/streamlit_evaluation.json")
+    
+    # Run evaluation button
+    if st.button("Run Evaluation"):
+        if not selected_benchmark:
+            st.warning("Please select a benchmark file.")
+            return
+            
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        try:
+            status_text.text("Initializing evaluation...")
+            
+            # Create results directory
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+            
+            # Start evaluation
+            status_text.text(f"Running evaluation on {selected_benchmark} with {num_samples} samples per database...")
+            
+            with st.spinner("Evaluation in progress..."):
+                results = macsql.evaluate_benchmark(
+                    benchmark_file=selected_benchmark,
+                    num_samples=num_samples,
+                    output_file=output_file
+                )
+                
+                progress_bar.progress(1.0)
+            
+            # Show success message
+            st.success(f"Evaluation completed successfully! Results saved to {output_file}")
+            
+            # Display summary
+            st.markdown('<div class="subheader">Evaluation Summary</div>', unsafe_allow_html=True)
+            
+            # Create metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    "SQL Match Rate", 
+                    f"{results.get('sql_match_rate', 0):.2%}", 
+                    f"{results.get('sql_match_count', 0)}/{results.get('total_items', 0)}"
+                )
+            with col2:
+                st.metric(
+                    "Execution Success Rate", 
+                    f"{results.get('execution_success_rate', 0):.2%}", 
+                    f"{results.get('execution_success_count', 0)}/{results.get('total_items', 0)}"
+                )
+            with col3:
+                st.metric(
+                    "Avg Similarity Score", 
+                    f"{results.get('avg_similarity', 0):.4f}"
+                )
+            
+            # Recommend next steps
+            st.info("Go to the 'Evaluation Results' page to view detailed results.")
+            
+        except Exception as e:
+            st.error(f"Error running evaluation: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
 
 if __name__ == "__main__":
     main() 

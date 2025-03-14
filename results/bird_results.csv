@@ -1,2 +1,2 @@
-db_id,question_id,question,gold_sql,generated_sql,execution_success,semantic_correct,comparison_notes,error_message,execution_time,difficulty,hardness
-student_club,1344,What was the notes of the fundraising on 2019/9/14?,SELECT notes FROM income WHERE source = 'Fundraising' AND date_received = '2019-09-14',SELECT notes FROM fundraising_events WHERE event_date = '2019-09-14' ;,True,False,,,22.440818548202515,simple,unknown
+db_id,question_id,question,gold_sql,generated_sql,execution_success,semantic_correct,sql_match,sql_similarity,comparison_notes,sql_comparison_notes,error_message,execution_time,difficulty,hardness
+student_club,1346,"Tell the phone number of ""Carlo Jacobs"".",SELECT phone FROM member WHERE first_name = 'Carlo' AND last_name = 'Jacobs',SELECT phone FROM customers WHERE first_name = 'Carlo' AND last_name = 'Jacobs';,True,False,True,0.8,,Missing in FROM: member; Extra in FROM: customers,,50.725138425827026,simple,unknown

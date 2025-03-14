@@ -1,41 +1,38 @@
-# MAC-SQL: Multi-Agent Collaborative Framework for Text-to-SQL
+# MAC-SQL: Multi-Agent Collaboration for SQL Generation
 
-![MAC-SQL Architecture](images/mac-sql-architecture.png)
+MAC-SQL is a multi-agent collaborative framework for text-to-SQL generation, based on the original [MAC-SQL paper](https://arxiv.org/abs/2306.00738). This implementation uses advanced Large Language Models (LLMs) and a multi-agent approach to generate accurate SQL from natural language queries.
 
-This project implements MAC-SQL, a novel multi-agent collaborative framework for Text-to-SQL generation. MAC-SQL uses multiple specialized agents that work together to generate accurate SQL queries from natural language questions.
+## Key Features
 
-## Overview
+- **Multi-Agent Architecture**: Three specialized agents collaborate to generate SQL:
+  - **Selector Agent**: Identifies relevant tables and columns from the database schema
+  - **Decomposer Agent**: Understands the question and creates a query plan
+  - **Refiner Agent**: Generates and refines SQL until it executes successfully
 
-MAC-SQL addresses challenges in Text-to-SQL conversion through a collaborative multi-agent approach:
+- **Enhanced Schema Handling**:
+  - Schema caching for improved performance
+  - Automatic table name correction
+  - Hardcoded schemas for known BIRD benchmark databases
 
-1. **Decomposer Agent**: Core agent for Text-to-SQL generation with few-shot chain-of-thought reasoning
-2. **Selector Agent**: Identifies relevant schema elements based on the user query
-3. **Refiner Agent**: Refines and fixes SQL queries when execution errors occur
+- **Robust SQL Generation**:
+  - SQL refinement based on execution errors
+  - Table and column name correction for common issues
+  - Fallback mechanisms when generation fails
 
-## Requirements
-
-- Python 3.8+
-- PostgreSQL database (primary support)
-- SQLite database (for BIRD benchmark evaluation)
-- Language model API access (Meta Llama 3, Together AI, etc.)
-
-## Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/leev1tan/langchain.git
-cd langchain
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Set up environment variables
-export TOGETHER_API_KEY=your_api_key_here
-```
+- **Streamlit Dashboard**:
+  - Interactive query interface
+  - Evaluation results visualization
+  - Benchmark runner for testing on BIRD
 
 ## Usage
 
-### Basic Usage
+### Installation
+
+```bash
+pip install -r requirements.txt
+```
+
+### Running Queries
 
 ```python
 from mac_sql import MACSQL
@@ -43,56 +40,59 @@ from mac_sql import MACSQL
 # Initialize MAC-SQL
 mac_sql = MACSQL(model_name="meta-llama/Llama-3.3-70B-Instruct-Turbo")
 
-# Connect to database
-mac_sql.connect_to_database("your_database_path")
+# Connect to a database
+mac_sql.connect_to_database("your_database")
 
-# Execute query
-sql_query, results = mac_sql.process_query("Show me all employees in the Sales department")
-print(f"SQL Query: {sql_query}")
-print(f"Results: {results}")
+# Process a query
+result = mac_sql.process_query("List all customers who made purchases in the last month")
+
+# Access results
+sql_query = result['sql']
+data = result['results']
 ```
 
-### Evaluation on BIRD Benchmark
+### Running the Dashboard
 
 ```bash
-python evaluate_bird.py --samples-per-db 5 --visualize
+streamlit run app.py
 ```
 
-## Project Structure
+### Running Benchmarks
 
-```
-.
-├── core/                       # Core components
-│   ├── agents.py               # Agent implementations
-│   ├── chat_manager.py         # Manages communication between agents
-│   └── config.py               # Configuration settings
-├── evaluate_bird.py            # BIRD benchmark evaluation script
-├── mac_sql.py                  # Main MAC-SQL implementation
-├── requirements.txt            # Project dependencies
-└── README.md                   # Project documentation
+```bash
+python run_evaluation.py --benchmark "path/to/benchmark.json" --num_samples 5 --output_file "results/evaluation.json"
 ```
 
-## Configuration
+## Recent Improvements
 
-Set your API key in one of the following ways:
-1. Environment variable: `TOGETHER_API_KEY`
-2. Configuration file: Create `config.json` with your API key
-3. Pass directly to the MACSQL constructor: `MACSQL(api_key="your_api_key")`
+1. **Fixed Schema Selection**:
+   - Implemented robust schema extraction from database
+   - Added fallback mechanisms for known databases
+   - Fixed issues with the `select_schema` method
 
-## Citation
+2. **Better Database Connectivity**:
+   - Improved handling for BIRD benchmark databases
+   - Added specialized database schema caching
+   - Enhanced error handling for connection issues
 
-If you use MAC-SQL in your research, please cite the original paper:
+3. **Robust SQL Generation and Refinement**:
+   - Implemented automatic error fixing based on error patterns
+   - Added specialized handling for common BIRD benchmark tables
+   - Enhanced SQL extraction from LLM responses
 
-```bibtex
-@article{wang2023macsql,
-  title={MAC-SQL: A Multi-Agent Collaborative Framework for Text-to-SQL},
-  author={Wang, Bing and Ren, Changyu and Yang, Jian and Liang, Xinnian and Bai, Jiaqi and Chai, Linzheng and Yan, Zhao and Zhang, Qian-Wen and Yin, Di and Sun, Xing and Li, Zhoujun},
-  journal={arXiv preprint arXiv:2312.11242},
-  year={2023}
-}
-```
+4. **Error Recovery**:
+   - Added sophisticated SQL refinement prompts with database context
+   - Implemented fallback query generation
+   - Added automatic table name correction
 
+5. **Enhanced Evaluation**:
+   - Added detailed SQL comparison for benchmarks
+   - Improved similarity scoring for SQL evaluation
+   - Added visualization of evaluation results
 
-## Acknowledgements
+## Limitations and Future Work
 
-This implementation is based on the paper "MAC-SQL: A Multi-Agent Collaborative Framework for Text-to-SQL" by Wang et al. (2023) available at [arXiv:2312.11242](https://arxiv.org/abs/2312.11242). 
+- Currently works best with PostgreSQL databases
+- Performance on complex nested queries can be improved
+- Adding more specialized handling for additional benchmark databases
+- Incorporating user feedback for continual improvement

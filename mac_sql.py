@@ -43,7 +43,7 @@ class MACSQL:
     
     def __init__(
         self,
-        model_name: str = "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        model_name: str = "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
         api_key: Optional[str] = None,
         temperature: float = 0.0,
         max_tokens: int = 1024,
@@ -649,332 +649,540 @@ class MACSQL:
             # Sample benchmark items by database
             db_items = {}
             for item in benchmark:
-                db_id = item.get("db_id", "").lower()
-                if db_id not in db_items:
-                    db_items[db_id] = []
-                db_items[db_id].append(item)
+                db_id = item.get("db_id")
+                if db_id:
+                    if db_id not in db_items:
+                        db_items[db_id] = []
+                    db_items[db_id].append(item)
             
             # Sample items from each database
             sampled_items = []
             for db_id, items in db_items.items():
-                n = min(num_samples, len(items))
-                sampled_items.extend(random.sample(items, n))
+                # Take at most num_samples items from each database
+                sample_size = min(num_samples, len(items))
+                sampled_items.extend(random.sample(items, sample_size))
             
-            print(f"Sampled {len(sampled_items)} benchmark items from {len(db_items)} databases")
+            print(f"Sampled {len(sampled_items)} items from {len(db_items)} databases")
             
             # Initialize results
-            results = {
-                "model": self.model_name,
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "execution_accuracy": 0.0,
-                "correct": 0,
-                "total": len(sampled_items),
-                "error_count": 0,
-                "detailed_results": [],
-                "results_by_database": {}
-            }
+            results = []
             
-            # Track current database to avoid reconnecting if unnecessary
-            current_db = None
-            current_chat_manager = None
-            
-            # Iterate through sampled items
+            # Process each benchmark item
             for i, item in enumerate(sampled_items):
-                db_id = item.get("db_id", "").lower()
-                question = item["question"]
-                gold_sql = item.get("query", "")
-                question_id = item.get("question_id", i)
+                db_id = item.get("db_id", "")
+                question = item.get("question", "")
+                gold_sql = item.get("SQL", "")  # Note: Using uppercase "SQL" key as in BIRD
+                evidence = item.get("evidence", "")
                 
-                print(f"\nEvaluating item {i+1}/{len(sampled_items)}: Database: {db_id}")
-                print(f"Question: {question}")
+                print(f"\n[{i+1}/{len(sampled_items)}] Processing question for database '{db_id}':")
+                print(f"  Question: {question}")
+                print(f"  Evidence: {evidence}")
+                print(f"  Gold SQL: {gold_sql}")
                 
-                # Initialize result item
-                result_item = {
-                    "db_id": db_id,
-                    "question": question,
-                    "question_id": question_id,
-                    "gold_sql": gold_sql,
-                    "results_match": False
-                }
+                # Check if the database exists in our PostgreSQL instance
+                available_dbs = self.get_available_databases()
+                db_exists = db_id in available_dbs
                 
-                try:
-                    # Connect to the appropriate database if needed
-                    if current_db != db_id:
-                        print(f"Connecting to database: {db_id}")
-                        
-                        # Initialize a new ChatManager for the current database
-                        current_chat_manager = ChatManager(
-                            model_name=self.model_name,
-                            api_key=self.api_key,
-                            temperature=self.temperature,
-                            max_tokens=self.max_tokens,
-                            **self.kwargs
-                        )
-                        
-                        success = current_chat_manager.connect_to_database(db_id)
-                        if not success:
-                            print(f"Failed to connect to database: {db_id}")
-                            result_item["error"] = f"Failed to connect to database: {db_id}"
-                            results["detailed_results"].append(result_item)
-                            results["error_count"] += 1
-                            continue
-                        
-                        current_db = db_id
+                if not db_exists:
+                    print(f"  WARNING: Database '{db_id}' not found in PostgreSQL. Using hardcoded schema if available.")
+                    print(f"  Available databases: {', '.join(available_dbs[:10])}{'...' if len(available_dbs) > 10 else ''}")
+                
+                # Connect to the correct database before processing
+                print(f"  Connecting to database: {db_id}...")
+                connection_success = self.chat_manager.connect_to_database(db_id)
+                if not connection_success:
+                    print(f"  WARNING: Failed to connect to database '{db_id}', will use hardcoded schema if available")
                     
-                    # Measure query execution time
-                    query_start_time = time.time()
-                    
-                    # Try to get schema from cache first
-                    schema_knowledge = self.get_from_schema_cache(db_id)
-                    if schema_knowledge:
-                        current_chat_manager.schema_knowledge = schema_knowledge
-                    
-                    # Process query with the chat manager
-                    result = current_chat_manager.process_query(question)
-                    generated_sql = result.get("sql", "")
-                    understanding = result.get("understanding", "")
-                    plan = result.get("plan", "")
-                    
-                    # Record generated SQL and reasoning
-                    result_item["generated_sql"] = generated_sql
-                    result_item["understanding"] = understanding
-                    result_item["plan"] = plan
-                    
-                    # Initialize variables for results
-                    generated_result = None
-                    gold_result = None
-                    results_match = False
-                    
-                    # Execute generated SQL if available
-                    if generated_sql:
-                        try:
-                            generated_result = current_chat_manager.execute_sql_query(generated_sql)
-                            result_item["generated_result"] = generated_result
-                        except Exception as sql_error:
-                            print(f"Error executing generated SQL: {sql_error}")
-                            result_item["error"] = f"Generated SQL execution error: {str(sql_error)}"
-                            results["error_count"] += 1
+                    # Check if this is a BIRD benchmark database
+                    is_bird_db = self.chat_manager._is_bird_benchmark_db(db_id)
+                    if is_bird_db:
+                        print(f"  INFO: '{db_id}' is a BIRD benchmark database, hardcoded schema should be available")
                     else:
-                        result_item["error"] = "No SQL was generated"
-                        results["error_count"] += 1
-                    
-                    # Execute gold SQL if available
-                    if gold_sql:
-                        try:
-                            gold_result = current_chat_manager.execute_sql_query(gold_sql)
-                            result_item["gold_result"] = gold_result
-                        except Exception as gold_error:
-                            print(f"Error executing gold SQL: {gold_error}")
-                            result_item["error"] = f"Gold SQL execution error: {str(gold_error)}"
-                    
-                    # Compare results if both executed successfully
-                    if (generated_result and gold_result and 
-                        generated_result.get('success', False) and 
-                        gold_result.get('success', False)):
-                        
-                        # Get result sets
-                        gen_rows = generated_result.get('rows', [])
-                        gold_rows = gold_result.get('rows', [])
-                        
-                        # Special case for count queries (single value results)
-                        if (len(gen_rows) == 1 and len(gold_rows) == 1 and
-                            isinstance(gen_rows[0], dict) and isinstance(gold_rows[0], dict)):
-                            
-                            # Extract the values (first value of each row)
-                            gen_value = list(gen_rows[0].values())[0] if gen_rows[0] else None
-                            gold_value = list(gold_rows[0].values())[0] if gold_rows[0] else None
-                            
-                            # Try to convert strings to numbers if needed
-                            if gen_value is not None and gold_value is not None:
-                                try:
-                                    if isinstance(gen_value, str) and isinstance(gold_value, (int, float)):
-                                        gen_value = float(gen_value)
-                                    elif isinstance(gold_value, str) and isinstance(gen_value, (int, float)):
-                                        gold_value = float(gold_value)
-                                except Exception:
-                                    # If conversion fails, just use the original values
-                                    pass
-                            
-                            # Compare values with tolerance for numeric values
-                            if isinstance(gen_value, (int, float)) and isinstance(gold_value, (int, float)):
-                                results_match = abs(gen_value - gold_value) < 0.001
-                            else:
-                                results_match = gen_value == gold_value
-                        
-                        # For more complex results with multiple rows
-                        elif len(gen_rows) == len(gold_rows):
-                            # Start with assumption they match
-                            results_match = True
-                            
-                            # For single column results, compare values
-                            if gen_rows and isinstance(gen_rows[0], dict) and isinstance(gold_rows[0], dict):
-                                gen_keys = set(gen_rows[0].keys())
-                                gold_keys = set(gold_rows[0].keys())
-                                
-                                # If key sets are different but both have only one column,
-                                # we can still try to compare values
-                                if len(gen_keys) == 1 and len(gold_keys) == 1:
-                                    gen_values = [list(row.values())[0] for row in gen_rows]
-                                    gold_values = [list(row.values())[0] for row in gold_rows]
-                                    
-                                    # Sort values for comparison if they're all the same type
-                                    if all(isinstance(v, (int, float)) for v in gen_values + gold_values):
-                                        gen_values.sort()
-                                        gold_values.sort()
-                                        
-                                        # Compare each value with tolerance
-                                        for gv, gr in zip(gen_values, gold_values):
-                                            if abs(gv - gr) > 0.001 * max(abs(gv), abs(gr), 1.0):
-                                                results_match = False
-                                                break
-                                    else:
-                                        # For non-numeric values, sort and compare directly
-                                        gen_values.sort(key=str)
-                                        gold_values.sort(key=str)
-                                        results_match = gen_values == gold_values
+                        print(f"  ERROR: '{db_id}' is not recognized as a BIRD benchmark database")
                 
-                    # Update result with match status
-                    result_item["results_match"] = results_match
+                # Add schema debugging output
+                schema_info = self.chat_manager.get_schema(force_refresh=True)
+                if not schema_info:
+                    print(f"  ERROR: No schema available for database '{db_id}'. Results will likely be incorrect.")
+                else:
+                    schema_length = len(schema_info)
+                    schema_preview = schema_info[:200] + "..." if len(schema_info) > 200 else schema_info
+                    print(f"\n[DEBUG] Schema for database '{db_id}' (length: {schema_length} chars):")
+                    print("=" * 80)
+                    print(f"{schema_preview}")
+                    print("=" * 80)
+                
+                # Using our improved agent workflow
+                result = self.chat_manager.process_query(
+                    user_query=question,
+                    db_id=db_id,  # Explicitly pass db_id to ensure correct database
+                    evidence=evidence
+                )
+                
+                # Check for success or failure
+                if result.get('success', False):
+                    generated_sql = result.get('sql', '')
+                    print(f"  Generated SQL: {generated_sql}")
                     
-                    # Update correct count if results match
+                    # Compare generated SQL with gold SQL
+                    sql_match, similarity_score, comparison_notes = self._compare_sql(generated_sql, gold_sql)
+                    
+                    # Execute generated SQL to check for execution errors
+                    try:
+                        execution_result = self.chat_manager.execute_sql_query(generated_sql)
+                        execution_success = execution_result.get('success', False)
+                        
+                        # Now also execute the gold SQL to compare results
+                        gold_execution_result = self.chat_manager.execute_sql_query(gold_sql)
+                        gold_execution_success = gold_execution_result.get('success', False)
+                        
+                        # Compare execution results if both executed successfully
+                        results_match = False
+                        result_similarity = 0.0
+                        result_metrics = {}
+                        
+                        if execution_success and gold_execution_success:
+                            results_match, result_similarity, result_metrics = self._compare_results(
+                                execution_result, gold_execution_result
+                            )
+                            print(f"  Results Match: {results_match}, Similarity: {result_similarity:.2f}")
+                            if result_metrics.get('f1_score') is not None:
+                                print(f"  Results F1 Score: {result_metrics.get('f1_score'):.2f}")
+                    except Exception as e:
+                        execution_success = False
+                        results_match = False
+                        result_similarity = 0.0
+                        result_metrics = {}
+                        print(f"  Execution error: {e}")
+                    
+                    # Add result to results list
+                    results.append({
+                        'db_id': db_id,
+                        'question': question,
+                        'gold_sql': gold_sql,
+                        'generated_sql': generated_sql,
+                        'execution_success': execution_success,
+                        'sql_match': sql_match,
+                        'similarity_score': similarity_score,
+                        'results_match': results_match,
+                        'result_similarity': result_similarity,
+                        'result_metrics': result_metrics,
+                        'understanding': result.get('understanding', ''),
+                        'plan': result.get('plan', ''),
+                        'evidence': evidence,
+                        'attempts': result.get('attempts', 1),
+                        'execution_time': result.get('execution_time', 0)
+                    })
+                    
+                    print(f"  SQL Match: {sql_match}, Execution Success: {execution_success}, Similarity Score: {similarity_score:.2f}")
                     if results_match:
-                        results["correct"] += 1
+                        print(f"  Results Match: True, F1 Score: {result_similarity:.2f}")
+                else:
+                    error = result.get('error', 'Unknown error')
+                    print(f"  Error: {error}")
                     
-                    # Measure execution time
-                    query_end_time = time.time()
-                    execution_time = query_end_time - query_start_time
-                    result_item["execution_time"] = execution_time
-                    
-                    # Categorize query complexity and type if gold SQL is available
-                    if gold_sql:
-                        try:
-                            result_item["complexity"] = self._categorize_query_complexity(gold_sql)
-                            result_item["query_type"] = self._categorize_query_type(gold_sql)
-                        except Exception as e:
-                            print(f"Error categorizing query: {e}")
-                    
-                    # Print result
-                    status = "✓" if results_match else "✗"
-                    print(f"Result: {status} ({execution_time:.2f}s)")
-                    print(f"Generated SQL: {generated_sql}")
-                    
-                except Exception as e:
-                    # Handle any other errors during processing
-                    print(f"Error processing question: {e}")
-                    traceback.print_exc()
-                    
-                    # Record the error
-                    result_item["error"] = str(e)
-                    results["error_count"] += 1
-                
-                # Add result to detailed results (happens regardless of success/failure)
-                results["detailed_results"].append(result_item)
-                
-                # Update results by database
-                if db_id not in results["results_by_database"]:
-                    results["results_by_database"][db_id] = {
-                        "correct": 0,
-                        "total": 0,
-                        "accuracy": 0.0
-                    }
-                
-                results["results_by_database"][db_id]["total"] += 1
-                if result_item.get("results_match", False):
-                    results["results_by_database"][db_id]["correct"] += 1
-                
-                # Calculate accuracy for this database
-                db_total = results["results_by_database"][db_id]["total"]
-                db_correct = results["results_by_database"][db_id]["correct"]
-                
-                if db_total > 0:
-                    accuracy = (db_correct / db_total) * 100
-                    results["results_by_database"][db_id]["accuracy"] = accuracy
+                    # Add failed result to results list
+                    results.append({
+                        'db_id': db_id,
+                        'question': question,
+                        'gold_sql': gold_sql,
+                        'generated_sql': result.get('sql', ''),
+                        'execution_success': False,
+                        'sql_match': False,
+                        'similarity_score': 0.0,
+                        'results_match': False,
+                        'result_similarity': 0.0,
+                        'result_metrics': {},
+                        'understanding': result.get('understanding', ''),
+                        'plan': result.get('plan', ''),
+                        'evidence': evidence,
+                        'error': error,
+                        'attempts': result.get('attempts', 1),
+                        'execution_time': result.get('execution_time', 0)
+                    })
             
-            # Calculate overall accuracy
-            if results["total"] > 0:
-                results["execution_accuracy"] = (results["correct"] / results["total"]) * 100
+            # Calculate aggregate statistics
+            total_items = len(results)
+            sql_match_count = sum(1 for item in results if item.get('sql_match', False))
+            execution_success_count = sum(1 for item in results if item.get('execution_success', False))
+            results_match_count = sum(1 for item in results if item.get('results_match', False))
+            avg_similarity = sum(item.get('similarity_score', 0) for item in results) / total_items if total_items > 0 else 0
+            avg_result_similarity = sum(item.get('result_similarity', 0) for item in results) / total_items if total_items > 0 else 0
+            avg_attempts = sum(item.get('attempts', 1) for item in results) / total_items if total_items > 0 else 0
             
-            # Calculate total evaluation time
-            end_time = time.time()
-            results["evaluation_time"] = end_time - start_time
+            # Group results by database
+            db_results = {}
+            for result in results:
+                db_id = result.get('db_id', '')
+                if db_id not in db_results:
+                    db_results[db_id] = []
+                db_results[db_id].append(result)
+            
+            # Calculate statistics by database
+            db_stats = {}
+            for db_id, db_result_list in db_results.items():
+                total_db_items = len(db_result_list)
+                db_sql_match_count = sum(1 for item in db_result_list if item.get('sql_match', False))
+                db_execution_success_count = sum(1 for item in db_result_list if item.get('execution_success', False))
+                db_results_match_count = sum(1 for item in db_result_list if item.get('results_match', False))
+                db_avg_similarity = sum(item.get('similarity_score', 0) for item in db_result_list) / total_db_items if total_db_items > 0 else 0
+                db_avg_result_similarity = sum(item.get('result_similarity', 0) for item in db_result_list) / total_db_items if total_db_items > 0 else 0
+                
+                db_stats[db_id] = {
+                    'total_items': total_db_items,
+                    'sql_match_count': db_sql_match_count,
+                    'sql_match_rate': db_sql_match_count / total_db_items if total_db_items > 0 else 0,
+                    'execution_success_count': db_execution_success_count,
+                    'execution_success_rate': db_execution_success_count / total_db_items if total_db_items > 0 else 0,
+                    'results_match_count': db_results_match_count,
+                    'results_match_rate': db_results_match_count / total_db_items if total_db_items > 0 else 0,
+                    'avg_similarity': db_avg_similarity,
+                    'avg_result_similarity': db_avg_result_similarity
+                }
+            
+            # Create evaluation summary
+            evaluation_summary = {
+                'model_name': self.model_name,
+                'benchmark_file': benchmark_file,
+                'total_items': total_items,
+                'sql_match_count': sql_match_count,
+                'sql_match_rate': sql_match_count / total_items if total_items > 0 else 0,
+                'execution_success_count': execution_success_count,
+                'execution_success_rate': execution_success_count / total_items if total_items > 0 else 0,
+                'results_match_count': results_match_count,
+                'results_match_rate': results_match_count / total_items if total_items > 0 else 0,
+                'avg_similarity': avg_similarity,
+                'avg_result_similarity': avg_result_similarity,
+                'avg_attempts': avg_attempts,
+                'database_stats': db_stats,
+                'results': results,
+                'evaluation_time': time.time() - start_time
+            }
             
             # Save results to file if specified
             if output_file:
-                os.makedirs(os.path.dirname(output_file) or '.', exist_ok=True)
                 with open(output_file, 'w', encoding='utf-8') as f:
-                    json.dump(results, f, indent=2)
-                print(f"Evaluation results saved to {output_file}")
+                    json.dump(evaluation_summary, f, indent=2)
+                print(f"Saved evaluation results to {output_file}")
             
-            return results
-        
+            print("\nEvaluation Summary:")
+            print(f"  Total Items: {total_items}")
+            print(f"  SQL Match Rate: {sql_match_count}/{total_items} ({evaluation_summary['sql_match_rate']:.2%})")
+            print(f"  Execution Success Rate: {execution_success_count}/{total_items} ({evaluation_summary['execution_success_rate']:.2%})")
+            print(f"  Results Match Rate: {results_match_count}/{total_items} ({evaluation_summary['results_match_rate']:.2%})")
+            print(f"  Average SQL Similarity Score: {avg_similarity:.4f}")
+            print(f"  Average Results Similarity Score: {avg_result_similarity:.4f}")
+            print(f"  Average Attempts: {avg_attempts:.2f}")
+            print(f"  Evaluation Time: {evaluation_summary['evaluation_time']:.2f} seconds")
+            
+            return evaluation_summary
+            
         except Exception as e:
-            print(f"Error in benchmark evaluation: {e}")
+            print(f"Error during evaluation: {e}")
+            import traceback
             traceback.print_exc()
             return {
-                "error": str(e),
-                "model": self.model_name,
-                "execution_accuracy": 0.0,
-                "correct": 0,
-                "total": 0
+                'error': str(e),
+                'success': False
             }
 
-    def _categorize_query_complexity(self, query):
+    def _compare_sql(self, generated_sql: str, gold_sql: str) -> Tuple[bool, float, str]:
         """
-        Categorize SQL query by complexity
+        Compare two SQL queries and return a tuple indicating whether they match,
+        the similarity score, and any notes about the comparison.
         
         Args:
-            query: SQL query string
+            generated_sql: The generated SQL query
+            gold_sql: The gold SQL query
             
         Returns:
-            Complexity category: 'simple', 'medium', or 'complex'
+            Tuple containing:
+            - bool: Whether the queries match
+            - float: Similarity score between 0 and 1
+            - str: Notes about the comparison
         """
-        query = query.lower()
+        if not generated_sql or not gold_sql:
+            return False, 0.0, "One or both SQL queries are empty"
         
-        # Count specific SQL features
-        joins = query.count('join')
-        aggregations = sum(1 for agg in ['count(', 'sum(', 'avg(', 'min(', 'max('] if agg in query)
-        subqueries = query.count('select') - 1  # Subtract 1 for the main query
-        group_by = 1 if 'group by' in query else 0
-        having = 1 if 'having' in query else 0
-        order_by = 1 if 'order by' in query else 0
-        distinct = 1 if 'distinct' in query else 0
+        # Normalize SQL for comparison
+        def normalize_sql(sql):
+            if not sql:
+                return ""
+            # Convert to lowercase
+            sql = sql.lower()
+            # Remove extra whitespace
+            sql = ' '.join(sql.split())
+            # Remove trailing semicolons
+            sql = sql.rstrip(';')
+            # Normalize quotes (replace double quotes with single quotes)
+            sql = sql.replace('"', "'")
+            return sql
         
-        # Calculate complexity score
-        complexity_score = joins + aggregations*1.5 + subqueries*2 + group_by + having*1.5 + order_by*0.5 + distinct*0.5
+        normalized_generated = normalize_sql(generated_sql)
+        normalized_gold = normalize_sql(gold_sql)
         
-        # Categorize based on score
-        if complexity_score <= 1:
-            return 'simple'
-        elif complexity_score <= 4:
-            return 'medium'
+        # Check for exact match after normalization
+        if normalized_generated == normalized_gold:
+            return True, 1.0, "SQL queries match exactly after normalization"
+        
+        # Calculate similarity based on keywords and structure
+        # Extract main components from both queries
+        def extract_components(sql):
+            components = {
+                'select': [],
+                'from': [],
+                'where': [],
+                'group_by': [],
+                'order_by': [],
+                'having': [],
+                'limit': None
+            }
+            
+            # Extract SELECT clause
+            select_match = re.search(r'select\s+(.*?)(?:\s+from\s+|\s*$)', sql, re.IGNORECASE)
+            if select_match:
+                select_clause = select_match.group(1).strip()
+                components['select'] = [col.strip() for col in select_clause.split(',')]
+            
+            # Extract FROM clause
+            from_match = re.search(r'from\s+(.*?)(?:\s+where\s+|\s+group\s+by\s+|\s+order\s+by\s+|\s+having\s+|\s+limit\s+|\s*$)', sql, re.IGNORECASE)
+            if from_match:
+                from_clause = from_match.group(1).strip()
+                # Handle joins in FROM clause
+                if 'join' in from_clause.lower():
+                    # This is a simplified approach - a real parser would be more robust
+                    components['from'] = [table.strip() for table in re.split(r'\s+(?:left|right|inner|outer|full|cross)?\s+join\s+', from_clause, flags=re.IGNORECASE) if table.strip()]
+                else:
+                    components['from'] = [table.strip() for table in from_clause.split(',')]
+            
+            # Extract WHERE clause
+            where_match = re.search(r'where\s+(.*?)(?:\s+group\s+by\s+|\s+order\s+by\s+|\s+having\s+|\s+limit\s+|\s*$)', sql, re.IGNORECASE)
+            if where_match:
+                where_clause = where_match.group(1).strip()
+                # Split conditions by AND/OR
+                conditions = re.split(r'\s+(?:and|or)\s+', where_clause, flags=re.IGNORECASE)
+                components['where'] = [cond.strip() for cond in conditions]
+            
+            # Extract GROUP BY clause
+            group_match = re.search(r'group\s+by\s+(.*?)(?:\s+order\s+by\s+|\s+having\s+|\s+limit\s+|\s*$)', sql, re.IGNORECASE)
+            if group_match:
+                group_clause = group_match.group(1).strip()
+                components['group_by'] = [col.strip() for col in group_clause.split(',')]
+            
+            # Extract ORDER BY clause
+            order_match = re.search(r'order\s+by\s+(.*?)(?:\s+limit\s+|\s*$)', sql, re.IGNORECASE)
+            if order_match:
+                order_clause = order_match.group(1).strip()
+                components['order_by'] = [col.strip() for col in order_clause.split(',')]
+            
+            # Extract HAVING clause
+            having_match = re.search(r'having\s+(.*?)(?:\s+order\s+by\s+|\s+limit\s+|\s*$)', sql, re.IGNORECASE)
+            if having_match:
+                having_clause = having_match.group(1).strip()
+                components['having'] = [cond.strip() for cond in re.split(r'\s+(?:and|or)\s+', having_clause, flags=re.IGNORECASE)]
+            
+            # Extract LIMIT clause
+            limit_match = re.search(r'limit\s+(\d+)', sql, re.IGNORECASE)
+            if limit_match:
+                components['limit'] = int(limit_match.group(1))
+            
+            return components
+        
+        # Extract components from both queries
+        generated_components = extract_components(normalized_generated)
+        gold_components = extract_components(normalized_gold)
+        
+        # Calculate similarity scores for each component
+        similarity_scores = {}
+        total_weight = 0.0
+        
+        # Weights for each component (adjust as needed)
+        weights = {
+            'select': 0.3,
+            'from': 0.2,
+            'where': 0.25,
+            'group_by': 0.1,
+            'order_by': 0.05,
+            'having': 0.05,
+            'limit': 0.05
+        }
+        
+        # Compare SELECT clauses
+        if generated_components['select'] and gold_components['select']:
+            select_sim = self._compare_lists(generated_components['select'], gold_components['select'])
+            similarity_scores['select'] = select_sim
+            total_weight += weights['select']
+        
+        # Compare FROM clauses
+        if generated_components['from'] and gold_components['from']:
+            from_sim = self._compare_lists(generated_components['from'], gold_components['from'])
+            similarity_scores['from'] = from_sim
+            total_weight += weights['from']
+        
+        # Compare WHERE clauses
+        if generated_components['where'] and gold_components['where']:
+            where_sim = self._compare_lists(generated_components['where'], gold_components['where'])
+            similarity_scores['where'] = where_sim
+            total_weight += weights['where']
+        
+        # Compare GROUP BY clauses
+        if generated_components['group_by'] and gold_components['group_by']:
+            group_sim = self._compare_lists(generated_components['group_by'], gold_components['group_by'])
+            similarity_scores['group_by'] = group_sim
+            total_weight += weights['group_by']
+        
+        # Compare ORDER BY clauses
+        if generated_components['order_by'] and gold_components['order_by']:
+            order_sim = self._compare_lists(generated_components['order_by'], gold_components['order_by'])
+            similarity_scores['order_by'] = order_sim
+            total_weight += weights['order_by']
+        
+        # Compare HAVING clauses
+        if generated_components['having'] and gold_components['having']:
+            having_sim = self._compare_lists(generated_components['having'], gold_components['having'])
+            similarity_scores['having'] = having_sim
+            total_weight += weights['having']
+        
+        # Compare LIMIT clauses
+        if generated_components['limit'] is not None and gold_components['limit'] is not None:
+            limit_sim = 1.0 if generated_components['limit'] == gold_components['limit'] else 0.0
+            similarity_scores['limit'] = limit_sim
+            total_weight += weights['limit']
+        
+        # Calculate weighted similarity score
+        weighted_score = 0.0
+        for component, score in similarity_scores.items():
+            weighted_score += score * weights[component]
+        
+        # Normalize score based on total weight
+        if total_weight > 0:
+            final_score = weighted_score / total_weight
         else:
-            return 'complex'
+            final_score = 0.0
+        
+        # Generate comparison notes
+        comparison_notes = []
+        for component, score in similarity_scores.items():
+            comparison_notes.append(f"{component.upper()}: {score:.2f}")
+        
+        # Determine match status
+        is_match = final_score > 0.85  # Threshold for considering a match
+        
+        return is_match, final_score, ", ".join(comparison_notes)
+    
+    def _compare_results(self, generated_results, gold_results):
+        """
+        Compare the results of executing the generated and gold SQL queries
+        
+        Args:
+            generated_results: Results from executing the generated SQL (rows and columns)
+            gold_results: Results from executing the gold SQL (rows and columns)
+            
+        Returns:
+            Tuple containing:
+            - bool: Whether the results match
+            - float: Result similarity score between 0 and 1
+            - dict: Detailed comparison metrics
+        """
+        # Initialize default return values
+        exact_match = False
+        similarity_score = 0.0
+        comparison_metrics = {
+            'rows_match': False,
+            'columns_match': False,
+            'total_rows_generated': 0,
+            'total_rows_gold': 0,
+            'common_rows': 0,
+            'precision': 0.0,
+            'recall': 0.0,
+            'f1_score': 0.0
+        }
+        
+        # Handle None or empty results
+        if generated_results is None or gold_results is None:
+            return exact_match, similarity_score, comparison_metrics
+            
+        # Extract rows and columns
+        generated_rows = generated_results.get('rows', [])
+        generated_cols = generated_results.get('columns', [])
+        gold_rows = gold_results.get('rows', [])
+        gold_cols = gold_results.get('columns', [])
+        
+        # Update metrics
+        comparison_metrics['total_rows_generated'] = len(generated_rows)
+        comparison_metrics['total_rows_gold'] = len(gold_rows)
+        
+        # Handle empty results case
+        if len(generated_rows) == 0 and len(gold_rows) == 0:
+            return True, 1.0, {**comparison_metrics, 'rows_match': True, 'columns_match': True, 'f1_score': 1.0}
+        
+        # Check if columns match (order might be different)
+        if set(generated_cols) == set(gold_cols):
+            comparison_metrics['columns_match'] = True
+        
+        # If no rows in one or both results, we can't do much comparison
+        if len(generated_rows) == 0 or len(gold_rows) == 0:
+            # If both are empty, that's a match
+            if len(generated_rows) == 0 and len(gold_rows) == 0:
+                return True, 1.0, {**comparison_metrics, 'rows_match': True}
+            # Otherwise, no match
+            return False, 0.0, comparison_metrics
+        
+        # Convert rows to sets of tuples for comparison
+        # This allows us to compare results regardless of row order
+        generated_row_set = set(tuple(row) for row in generated_rows)
+        gold_row_set = set(tuple(row) for row in gold_rows)
+        
+        # Find common rows
+        common_rows = generated_row_set.intersection(gold_row_set)
+        comparison_metrics['common_rows'] = len(common_rows)
+        
+        # Calculate precision and recall
+        if len(generated_rows) > 0:
+            comparison_metrics['precision'] = len(common_rows) / len(generated_rows)
+        if len(gold_rows) > 0:
+            comparison_metrics['recall'] = len(common_rows) / len(gold_rows)
+        
+        # Calculate F1 score
+        precision = comparison_metrics['precision']
+        recall = comparison_metrics['recall']
+        if precision + recall > 0:
+            comparison_metrics['f1_score'] = 2 * (precision * recall) / (precision + recall)
+        
+        # Determine if results match (using F1 score threshold)
+        f1_score = comparison_metrics['f1_score']
+        exact_match = f1_score > 0.95  # High threshold for considering a match
+        similarity_score = f1_score  # Use F1 as the similarity score
+        
+        # Set rows_match based on exact match
+        comparison_metrics['rows_match'] = exact_match
+        
+        return exact_match, similarity_score, comparison_metrics
 
-    def _categorize_query_type(self, query):
+    def _compare_lists(self, list1, list2):
         """
-        Categorize SQL query by type
+        Calculate similarity between two lists (set-based comparison)
         
         Args:
-            query: SQL query string
+            list1: First list
+            list2: Second list
             
         Returns:
-            Query type: 'select', 'aggregation', 'join', etc.
+            Similarity score between 0 and 1
         """
-        query = query.lower()
+        if not list1 and not list2:
+            return 1.0
         
-        # Identify the primary type
-        if 'join' in query:
-            if any(agg in query for agg in ['count(', 'sum(', 'avg(', 'min(', 'max(']):
-                return 'join_with_aggregation'
-            return 'join'
-        elif any(agg in query for agg in ['count(', 'sum(', 'avg(', 'min(', 'max(']):
-            if 'group by' in query:
-                return 'group_aggregation'
-            return 'aggregation'
-        elif 'where' in query:
-            return 'filtered_select'
-        else:
-            return 'simple_select'
+        if not list1 or not list2:
+            return 0.0
+        
+        set1 = set(list1)
+        set2 = set(list2)
+        
+        intersection = len(set1.intersection(set2))
+        union = len(set1.union(set2))
+        
+        return intersection / union if union > 0 else 0.0
 
 # Command line interface
 if __name__ == "__main__":
